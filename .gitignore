@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment & secrets
+.env
+*.key
+*.pem
+
+# Outputs
+outputs/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.rar
+*.7z
+
+# Logs
+*.log
+log/
+
+# Temp
+.temp/
+*.tmp
+*~
+
+# Large models
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+models/
+
+# Screenshots
+screenshot.png
