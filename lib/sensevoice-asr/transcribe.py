@@ -62,7 +62,7 @@ def transcribe(model, audio_path, language="zh", use_postprocess=True):
         language=language,
         ban_emo_unk=True,
         use_itn=True,
-        batch_size_s=60,
+        batch_size_s=15,
     )
     print(f"[2/3] 转录完成 ({time.time() - t0:.1f}s)", flush=True)
 

@@ -40,7 +40,7 @@ def transcribe(
     device="cpu",
     model_dir=None,
     use_itn=True,
-    batch_size_s=60,
+    batch_size_s=15,
     enable_vad=False,
 ):
     global _model, _current_device

@@ -1,0 +1,291 @@
+"""
+搜索引擎模块 — 百度 + 搜狗（国内可直连）
+
+替换原有 DuckDuckGo 搜索，改用国内搜索引擎。
+策略：百度优先 → 搜狗 fallback → 返回空结果。
+
+使用示例:
+    from agent.search_engine import search_web
+    results = search_web("Python 最新版本", max_results=5)
+"""
+
+from __future__ import annotations
+
+import re as _re
+import sys as _sys
+import time as _time
+import urllib.parse
+import urllib.request
+import urllib.error
+
+
+# ── 通用 User-Agent（模拟正常浏览器） ──
+_SEARCH_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+
+def _random_ua() -> str:
+    """返回随机 User-Agent 头"""
+    import random as _random
+    return _random.choice(_SEARCH_USER_AGENTS)
+
+
+def _fetch_html(url: str, timeout: int = 15) -> str | None:
+    """通用 HTTP GET 请求，返回 HTML 文本或 None"""
+    headers = {
+        "User-Agent": _random_ua(),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Cache-Control": "max-age=0",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # 处理 gzip 编码
+            content = resp.read()
+            content_encoding = resp.headers.get("Content-Encoding", "")
+            if "gzip" in content_encoding:
+                import gzip
+                content = gzip.decompress(content)
+            html = content.decode("utf-8", errors="replace")
+            return html
+    except urllib.error.HTTPError as e:
+        _sys.stderr.write(f"[search_engine] HTTP {e.code}: {url[:80]}\n")
+        _sys.stderr.flush()
+        return None
+    except Exception as e:
+        _sys.stderr.write(f"[search_engine] 请求异常: {e}\n")
+        _sys.stderr.flush()
+        return None
+
+
+# ══════════════════════════════════════════════════════════════
+#  百度搜索
+# ══════════════════════════════════════════════════════════════
+
+def _search_baidu(query: str, max_results: int = 5) -> list[str]:
+    """通过 HTTP 抓取百度搜索结果摘要。
+
+    解析百度搜索结果页面，提取每条结果的摘要文本。
+    返回结果摘要列表。
+    """
+    encoded = urllib.parse.quote(query)
+    url = f"https://www.baidu.com/s?wd={encoded}&ie=utf-8&rn={max_results}"
+
+    html = _fetch_html(url, timeout=15)
+    if not html:
+        _sys.stderr.write("[search_engine] 百度返回空\n")
+        _sys.stderr.flush()
+        return []
+
+    results: list[str] = []
+
+    # ── 策略 1: 匹配百度结果摘要（新版百度页面结构） ──
+    # 匹配 <span class="content-right_XXX"> 内的文本
+    snippets = _re.findall(
+        r'<span[^>]*class="[^"]*content-right[^"]*"[^>]*>(.*?)</span>',
+        html, _re.DOTALL,
+    )
+    for s in snippets:
+        clean = _strip_html(s)
+        if clean and len(clean) > 15 and len(clean) < 2000:
+            results.append(clean)
+
+    # ── 策略 2: 匹配 c-abstract / c-span 等常见 class ──
+    if len(results) < max_results:
+        for pattern in [
+            r'<span[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</span>',
+            r'<div[^>]*class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</div>',
+        ]:
+            extra = _re.findall(pattern, html, _re.DOTALL)
+            for s in extra:
+                clean = _strip_html(s)
+                if clean and len(clean) > 15 and clean not in results:
+                    results.append(clean)
+
+    # ── 策略 3: 宽松匹配 — 匹配长文本片段 ──
+    if len(results) < max_results:
+        # 匹配 <em> 标签包围的高亮区域附近的文本
+        blocks = _re.findall(
+            r'<(?:span|div|p|font)[^>]*>(.{20,600}?)</(?:span|div|p|font)>',
+            html, _re.DOTALL,
+        )
+        for b in blocks:
+            clean = _strip_html(b)
+            if clean and len(clean) > 20 and clean not in results:
+                # 跳过明显的非内容文本（导航、时间、数字等）
+                if not _is_noise_text(clean):
+                    results.append(clean)
+
+    _sys.stderr.write(f"[search_engine] 百度返回 {len(results[:max_results])} 条\n")
+    _sys.stderr.flush()
+    return results[:max_results]
+
+
+# ══════════════════════════════════════════════════════════════
+#  搜狗搜索
+# ══════════════════════════════════════════════════════════════
+
+def _search_sogou(query: str, max_results: int = 5) -> list[str]:
+    """通过 HTTP 抓取搜狗搜索结果摘要。
+
+    搜狗搜索结果页面结构较简单，直接解析摘要文本。
+    """
+    encoded = urllib.parse.quote(query)
+    url = f"https://www.sogou.com/web?query={encoded}&ie=utf8"
+
+    html = _fetch_html(url, timeout=15)
+    if not html:
+        _sys.stderr.write("[search_engine] 搜狗返回空\n")
+        _sys.stderr.flush()
+        return []
+
+    results: list[str] = []
+
+    # ── 策略 1: 搜狗结果摘要 class ──
+    # 搜狗用 <div class="str-text"> 或 class 包含 "abstract" / "str_info" / "space-txt"
+    for pattern in [
+        r'<p[^>]*class="[^"]*str_info[^"]*"[^>]*>(.*?)</p>',
+        r'<p[^>]*class="[^"]*str-text[^"]*"[^>]*>(.*?)</p>',
+        r'<div[^>]*class="[^"]*(?:abstract|str_info|space-txt|str-text)[^"]*"[^>]*>(.*?)</div>',
+        r'<p[^>]*class="[^"]*(?:abstract|str_info|space-txt|str-text)[^"]*"[^>]*>(.*?)</p>',
+    ]:
+        snippets = _re.findall(pattern, html, _re.DOTALL)
+        for s in snippets:
+            clean = _strip_html(s)
+            if clean and len(clean) > 15 and len(clean) < 2000:
+                if clean not in results:
+                    results.append(clean)
+
+    # ── 策略 2: 通用链文本提取 ──
+    if len(results) < max_results:
+        # 搜狗结果中 <em> 标注匹配词，提取包含 <em> 的父级元素
+        blocks = _re.findall(
+            r'<(?:p|div|span)[^>]*>((?:(?!<(?:p|div|span)\b).)*?<em>.*?</em>.*?)</(?:p|div|span)>',
+            html, _re.DOTALL,
+        )
+        for b in blocks:
+            clean = _strip_html(b)
+            if clean and len(clean) > 20 and clean not in results:
+                if not _is_noise_text(clean):
+                    results.append(clean)
+
+    # ── 策略 3: 宽松匹配 — 长文本块 ──
+    if len(results) < max_results:
+        blocks = _re.findall(
+            r'<(?:p|div|span|font)[^>]*>(.{25,600}?)</(?:p|div|span|font)>',
+            html, _re.DOTALL,
+        )
+        for b in blocks:
+            clean = _strip_html(b)
+            if clean and len(clean) > 20 and clean not in results:
+                if not _is_noise_text(clean):
+                    results.append(clean)
+
+    _sys.stderr.write(f"[search_engine] 搜狗返回 {len(results[:max_results])} 条\n")
+    _sys.stderr.flush()
+    return results[:max_results]
+
+
+# ══════════════════════════════════════════════════════════════
+#  工具函数
+# ══════════════════════════════════════════════════════════════
+
+def _strip_html(text: str) -> str:
+    """移除 HTML 标签和实体引用，返回纯文本"""
+    # 移除 HTML 标签
+    clean = _re.sub(r'<[^>]+>', '', text)
+    # 解码常见 HTML 实体
+    clean = clean.replace("&amp;", "&")
+    clean = clean.replace("&lt;", "<")
+    clean = clean.replace("&gt;", ">")
+    clean = clean.replace("&quot;", '"')
+    clean = clean.replace("&#39;", "'")
+    clean = clean.replace("&nbsp;", " ")
+    clean = clean.replace("\u00a0", " ")  # non-breaking space
+    # 清理多余空白
+    clean = _re.sub(r'\s+', ' ', clean).strip()
+    # 移除零宽字符
+    clean = _re.sub(r'[\u200b\u200c\u200d\u2060\ufeff]', '', clean)
+    return clean
+
+
+def _is_noise_text(text: str) -> bool:
+    """判断是否为噪音文本（导航、时间戳、纯数字等）"""
+    if not text:
+        return True
+    # 纯数字、日期、时间格式
+    if _re.match(r'^[\d\-\/:\.\s,，年月日时分秒]+$', text):
+        return True
+    # 纯导航类文字
+    noise_patterns = [
+        r'^(上一页|下一页|首页|末页|更多|搜索|百度|搜狗|登录|注册|下载)$',
+        r'^\d{4}-\d{2}-\d{2}$',  # 日期格式
+        r'^\d+分钟前$',          # 相对时间
+        r'^\d+小时前$',
+        r'^\d+天前$',
+        r'^loading\.{3}$',
+    ]
+    for pat in noise_patterns:
+        if _re.match(pat, text, _re.IGNORECASE):
+            return True
+    return False
+
+
+# ══════════════════════════════════════════════════════════════
+#  统一搜索入口
+# ══════════════════════════════════════════════════════════════
+
+def search_web(query: str, max_results: int = 5) -> str:
+    """使用百度 + 搜狗搜索，返回聚合的搜索结果摘要（纯文本）。
+
+    策略：百度优先 → 搜狗 fallback → 返回空字符串。
+
+    Args:
+        query: 搜索关键词
+        max_results: 最大返回结果数
+
+    Returns:
+        用换行分隔的结果摘要文本，每行以 "- " 开头。
+        如果所有引擎均失败，返回空字符串。
+    """
+    if not query or not query.strip():
+        return ""
+
+    query = query.strip()
+
+    # ── 方案一：百度搜索 ──
+    try:
+        _sys.stderr.write(f"[research] 百度搜索: {query[:60]}\n")
+        _sys.stderr.flush()
+        baidu_results = _search_baidu(query, max_results)
+        if baidu_results:
+            formatted = "\n".join(f"- {r[:300]}" for r in baidu_results[:max_results])
+            return formatted
+        _sys.stderr.write("[research] 百度无结果，尝试搜狗\n")
+        _sys.stderr.flush()
+    except Exception as e:
+        _sys.stderr.write(f"[research] 百度异常: {e}，尝试搜狗\n")
+        _sys.stderr.flush()
+
+    # ── 方案二：搜狗搜索（fallback） ──
+    try:
+        _time.sleep(0.5)  # 避免请求过快
+        _sys.stderr.write(f"[research] 搜狗搜索: {query[:60]}\n")
+        _sys.stderr.flush()
+        sogou_results = _search_sogou(query, max_results)
+        if sogou_results:
+            formatted = "\n".join(f"- {r[:300]}" for r in sogou_results[:max_results])
+            return formatted
+    except Exception as e:
+        _sys.stderr.write(f"[research] 搜狗异常: {e}\n")
+        _sys.stderr.flush()
+
+    _sys.stderr.write("[research] 所有搜索引擎均无结果\n")
+    _sys.stderr.flush()
+    return ""

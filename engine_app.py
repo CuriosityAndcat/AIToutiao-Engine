@@ -802,72 +802,15 @@ def step_transcribe(state: PipelineState) -> bool:
 
     st.session_state.progress_pct = 0.18
 
-    # ── 优先级 1：始终先尝试 SenseVoice（中文最优） ──
+    # ── SenseVoice 转录（中文最优，唯一后端） ──
+    _sys.stderr.write("[transcribe] 使用 SenseVoice 后端\n"); _sys.stderr.flush()
+    add_log("使用 SenseVoice 后端（阿里达摩院，中文最优）", "info")
     try:
-        _sys.stderr.write("[transcribe] 优先尝试 SenseVoice 后端\n"); _sys.stderr.flush()
-        add_log("优先尝试 SenseVoice 后端（阿里达摩院，中文最优）", "info")
         return _transcribe_sensevoice(video_path, state)
     except Exception as e:
         add_log(f"SenseVoice 转录失败: {e}", "error")
-        add_log("回退到备选后端…", "warning")
-
-    # ── 优先级 2：根据 TRANSCRIBE_BACKEND 选择策略 ──
-    if backend == "transformers":
-        # 用户明确要求 transformers，跳过 faster-whisper
-        _sys.stderr.write("[transcribe] 直接使用 transformers 后端\n"); _sys.stderr.flush()
-        add_log("使用 transformers 后端（HuggingFace）", "info")
-        return _transcribe_transformers(video_path, backend, model, MODEL_MAP, state)
-
-    # 默认策略：优先尝试 faster-whisper，失败回退 transformers
-    try:
-        _sys.stderr.write("[transcribe] 尝试导入 faster_whisper...\n"); _sys.stderr.flush()
-        from faster_whisper import WhisperModel as FWModel
-        _sys.stderr.write("[transcribe] faster_whisper import 成功\n"); _sys.stderr.flush()
-
-        device = os.getenv("WHISPER_DEVICE", "cpu")
-        compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-        # 规范化模型名：去除 openai/whisper- 等前缀，faster-whisper 只需 short name
-        fw_model_name = model
-        for prefix in ("openai/whisper-", "openai/", "whisper-"):
-            if fw_model_name.startswith(prefix):
-                fw_model_name = fw_model_name[len(prefix):]
-                break
-
-        add_log(f"使用 faster-whisper: {fw_model_name} ({device}/{compute_type})", "info")
-        _sys.stderr.write(f"[transcribe] 加载模型: {fw_model_name}...\n"); _sys.stderr.flush()
-        fw = FWModel(fw_model_name, device=device, compute_type=compute_type)
-        _sys.stderr.write("[transcribe] 模型加载完成\n"); _sys.stderr.flush()
-
-        # 提取音频
-        audio_path = _extract_audio(video_path, state.run_dir)
-
-        segments = []
-        seg_iter, info = fw.transcribe(audio_path, language="zh", beam_size=5)
-        for s in seg_iter:
-            text = s.text.strip()
-            if text:
-                segments.append(text)
-
-        transcript = "\n".join(segments)
-        transcript_file = state.run_dir / "transcript.txt"
-        transcript_file.write_text(transcript, encoding="utf-8")
-
-        state.outputs["transcript_text"] = transcript
-        state.outputs["transcript_files"] = [str(transcript_file)]
-
-        add_log(f"转录完成 ({len(transcript)} 字符)", "success")
-        set_stage("转录", "done")
-        state.mark_done("transcribe")
-        st.session_state.progress_pct = 0.28
-        return True
-
-    except ImportError:
-        add_log("faster-whisper 未安装，回退到 transformers...", "warning")
-        return _transcribe_transformers(video_path, backend, model, MODEL_MAP, state)
-    except Exception as e:
-        add_log(f"faster-whisper 转录失败: {e}", "error")
-        add_log("回退到 transformers...", "warning")
-        return _transcribe_transformers(video_path, backend, model, MODEL_MAP, state)
+        set_stage("转录", "failed")
+        return False
 
 
 def _extract_audio(video_path: str, run_dir: Path) -> str:
@@ -1007,6 +950,7 @@ def _transcribe_sensevoice(video_path, state):
         audio_path,
         language="zh",
         model_dir=model_dir or None,
+        batch_size_s=15,
     )
 
     # 清洗重复循环（适配 SenseVoice 输出格式）
@@ -1193,88 +1137,17 @@ def step_humanize(state: PipelineState) -> bool:
 # 🔍 Web 搜索研究模块
 # ============================================================
 
-SEARCH_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-
 MAX_RESEARCH_ITERATIONS = 3       # 最大研究-重写轮数
 QUALITY_PASS_THRESHOLD = 75        # 质量评分通过线（0-100）
 
 
 def _search_web(query: str, max_results: int = 5) -> str:
-    """使用 DuckDuckGo 搜索，返回聚合的搜索结果摘要（纯文本）。
+    """使用百度 + 搜狗搜索，返回聚合的搜索结果摘要（纯文本）。
 
-    优先使用 duckduckgo_search 库；不可用时回退到 HTTP 请求。
+    策略：百度优先 → 搜狗 fallback → 返回空字符串。
     """
-    import sys as _sys
-
-    # ── 方案一: ddgs 库（新版） ──
-    try:
-        from ddgs import DDGS
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                body = r.get("body", "")
-                if body:
-                    results.append(f"- {body[:300]}")
-        if results:
-            _sys.stderr.write(f"[research] ddgs 返回 {len(results)} 条结果\n"); _sys.stderr.flush()
-            return "\n".join(results)
-    except ImportError:
-        _sys.stderr.write("[research] ddgs 未安装，尝试 duckduckgo_search\n"); _sys.stderr.flush()
-    except Exception as e:
-        _sys.stderr.write(f"[research] ddgs 异常: {e}，回退\n"); _sys.stderr.flush()
-
-    # ── 方案二: duckduckgo_search 库 ──
-    try:
-        from duckduckgo_search import DDGS
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                body = r.get("body", "")
-                if body:
-                    results.append(f"- {body[:300]}")
-        if results:
-            _sys.stderr.write(f"[research] duckduckgo_search 返回 {len(results)} 条结果\n"); _sys.stderr.flush()
-            return "\n".join(results)
-    except ImportError:
-        _sys.stderr.write("[research] duckduckgo_search 未安装，回退到 HTTP 方式\n"); _sys.stderr.flush()
-    except Exception as e:
-        _sys.stderr.write(f"[research] duckduckgo_search 异常: {e}，回退\n"); _sys.stderr.flush()
-
-    # ── 方案二: 直接 HTTP 请求 DuckDuckGo Lite ──
-    try:
-        import urllib.parse
-        import urllib.request
-        import re as _re
-
-        url = f"https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}"
-        req = urllib.request.Request(url, headers={"User-Agent": SEARCH_USER_AGENT})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
-        # 提取结果摘要（lite 版本用 <td> 展示片段）
-        snippets = _re.findall(
-            r'<a[^>]*class="result-link"[^>]*>.*?</a>.*?<td[^>]*class="result-snippet"[^>]*>(.*?)</td>',
-            html, _re.DOTALL | _re.IGNORECASE,
-        )
-        if not snippets:
-            # 备选：匹配任意 <td> 中的长文本片段
-            snippets = _re.findall(r'<td[^>]*>(.{80,}?)</td>', html, _re.DOTALL)
-
-        results = []
-        for s in snippets[:max_results]:
-            clean = _re.sub(r'<[^>]+>', '', s).strip()
-            if clean and len(clean) > 20:
-                results.append(f"- {clean[:300]}")
-
-        _sys.stderr.write(f"[research] HTTP 搜索返回 {len(results)} 条结果\n"); _sys.stderr.flush()
-        return "\n".join(results) if results else ""
-
-    except Exception as e:
-        _sys.stderr.write(f"[research] HTTP 搜索失败: {e}\n"); _sys.stderr.flush()
-        return ""
+    from agent.search_engine import search_web as _do_search
+    return _do_search(query, max_results=max_results)
 
 
 def _extract_key_topics(state: PipelineState) -> str:
