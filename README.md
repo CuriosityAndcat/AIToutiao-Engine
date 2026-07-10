@@ -14,7 +14,9 @@ copy .env.example .env
 # 编辑 .env 填入你的 DeepSeek API Key
 
 # 3. 下载 SenseVoice 模型（可选，使用 sensevoice 转录后端时需要）
-# 从 ModelScope 下载 SenseVoiceSmall 到 models/iic/SenseVoiceSmall/
+# 从 ModelScope 下载 SenseVoiceSmall 到 lib/sensevoice-asr/models/iic/SenseVoiceSmall/
+# 或设置环境变量 SENSEVOICE_MODEL_DIR 指向模型目录
+# 未配置时将自动回退到 transformers/whisper-small
 
 # 4. 启动引擎
 run_engine.bat
@@ -46,8 +48,6 @@ AIToutiao-Engine/
 │   ├── toutiao-auto-publisher/  # 头条发布
 │   ├── video-batch-download-main/  # 视频下载
 │   └── wewrite-main/      # 写作工具链
-├── config/                # 配置文件
-├── prompts/               # AI 提示词
 └── backup/                # 备份文件
 ```
 

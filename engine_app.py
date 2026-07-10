@@ -466,8 +466,9 @@ def _ensure_node_env() -> bool:
     try:
         sp.run(["node", "--version"], capture_output=True, check=True, timeout=10)
     except (FileNotFoundError, sp.CalledProcessError):
-        add_log("❌ Node.js 未安装，请安装 Node.js >= 20 后重试", "error")
-        add_log("   下载地址: https://nodejs.org/", "info")
+        add_log("❌ Node.js 未安装，Playwright 浏览器下载不可用", "error")
+        add_log("   📥 安装 Node.js (>=20)：https://nodejs.org/ （选择 LTS 版本）", "info")
+        add_log("   💡 安装后将自动启用最稳定的抖音下载方式", "info")
         return False
 
     # 2. 检查 Playwright npm 包
@@ -630,13 +631,41 @@ def _download_via_ytdlp(state: PipelineState, temp_dir: Path) -> Optional[Dict[s
         "merge_output_format": "mp4",
     }
 
+    # ── 抖音 Cookie 注入：优先浏览器 > 文件 > 无 cookie ──
+    is_douyin = _is_douyin_url(state.input_url)
+    if is_douyin:
+        cookie_source = os.getenv("YOUTUBE_DL_COOKIE_SOURCE", "")
+        cookie_file = os.getenv("YOUTUBE_DL_COOKIE_FILE", "")
+
+        if cookie_source:
+            # 方式1：从浏览器提取（如 "chrome", "firefox"）
+            ydl_opts["cookiesfrombrowser"] = (cookie_source,)
+            add_log(f"🍪 从浏览器 [{cookie_source}] 提取 Cookies", "info")
+            _sys.stderr.write(f"[yt-dlp] cookiesfrombrowser={cookie_source}\n"); _sys.stderr.flush()
+        elif cookie_file and Path(cookie_file).exists():
+            # 方式2：从 Netscape 格式 cookie 文件
+            ydl_opts["cookiefile"] = cookie_file
+            add_log(f"🍪 使用 Cookie 文件: {cookie_file}", "info")
+            _sys.stderr.write(f"[yt-dlp] cookiefile={cookie_file}\n"); _sys.stderr.flush()
+        else:
+            # 无 cookie 时尝试 Chrome 自动检测
+            _sys.stderr.write("[yt-dlp] 尝试 cookiesfrombrowser=chrome\n"); _sys.stderr.flush()
+            ydl_opts["cookiesfrombrowser"] = ("chrome",)
+            add_log("🍪 尝试从 Chrome 浏览器自动提取 Cookies", "info")
+
     try:
         _sys.stderr.write("[yt-dlp] extract_info 开始...\n"); _sys.stderr.flush()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(state.input_url, download=True)
         _sys.stderr.write("[yt-dlp] extract_info 完成\n"); _sys.stderr.flush()
     except Exception as e:
-        add_log(f"yt-dlp 下载失败: {str(e).split(chr(10))[0][:200]}", "warning")
+        err_msg = str(e).split(chr(10))[0][:200]
+        add_log(f"yt-dlp 下载失败: {err_msg}", "warning")
+        # 如果是 Cookie 相关错误，给出明确提示
+        if "cookie" in str(e).lower() or "cookies" in str(e).lower():
+            add_log("💡 Cookie 提取失败，请尝试以下方案：", "info")
+            add_log("   1. 安装 Node.js 后重试（将自动使用 Playwright 下载）", "info")
+            add_log("   2. 手动从浏览器导出 cookie 文件并设置环境变量 YOUTUBE_DL_COOKIE_FILE", "info")
         return None
 
     video_files = []
@@ -2631,6 +2660,9 @@ def render_results():
 # ============================================================
 # 主入口
 # ============================================================
+# ── 流水线互斥锁：防止 Streamlit 多次 rerun 导致并发执行 ──
+_PIPELINE_LOCK = threading.Lock()
+
 def main():
     style, content_type, humanize, with_images = render_sidebar()
     url, generate_btn = render_main()
@@ -2642,33 +2674,39 @@ def main():
             st.error("❌ 未在输入中找到有效的抖音链接，请粘贴包含 https://v.douyin.com/... 的分享内容")
         elif st.session_state.is_running:
             st.warning("⏳ 流水线正在执行中，请等待完成后再试")
+        elif not _PIPELINE_LOCK.acquire(blocking=False):
+            st.warning("⏳ 流水线已在另一个会话中执行，请等待完成后再试")
         else:
-            # 初始化运行状态
-            st.session_state.is_running = True
-            st.session_state.pipeline_done = False
-            st.session_state.pipeline_error = None
-            st.session_state.logs = []
-            st.session_state.stage_event = threading.Event()   # 🆕 分步控制器
-            st.session_state.awaiting_next = False             # 🆕
+            try:
+                # 初始化运行状态
+                st.session_state.is_running = True
+                st.session_state.pipeline_done = False
+                st.session_state.pipeline_error = None
+                st.session_state.logs = []
+                st.session_state.stage_event = threading.Event()   # 🆕 分步控制器
+                st.session_state.awaiting_next = False             # 🆕
 
-            # 确保转录引擎在主线程完成首次加载（避免子线程 import 死锁）
-            # 首次约 45 秒，之后瞬间返回
-            if _TORCH_MOD is None or _PIPELINE_FN is None:
-                with st.spinner("⏳ 首次启动，正在加载 AI 引擎（约 45 秒）……"):
-                    _ensure_transcribe_imports()
+                # 确保转录引擎在主线程完成首次加载（避免子线程 import 死锁）
+                # 首次约 45 秒，之后瞬间返回
+                if _TORCH_MOD is None or _PIPELINE_FN is None:
+                    with st.spinner("⏳ 首次启动，正在加载 AI 引擎（约 45 秒）……"):
+                        _ensure_transcribe_imports()
 
-            def _run():
-                try:
-                    execute_pipeline(processed, style, humanize, with_images, content_type)
-                except BaseException as e:
-                    # 保留 execute_pipeline() 中已设置的 pipeline_error，
-                    # 避免覆盖带有类型前缀的格式化消息
-                    if not st.session_state.pipeline_error:
-                        st.session_state.pipeline_error = f"致命错误({type(e).__name__}): {e}"
+                def _run():
+                    try:
+                        execute_pipeline(processed, style, humanize, with_images, content_type)
+                    except BaseException as e:
+                        if not st.session_state.pipeline_error:
+                            st.session_state.pipeline_error = f"致命错误({type(e).__name__}): {e}"
+                    finally:
+                        _PIPELINE_LOCK.release()
 
-            thread = threading.Thread(target=_run, daemon=True)
-            add_script_run_ctx(thread, get_script_run_ctx())
-            thread.start()
+                thread = threading.Thread(target=_run, daemon=True)
+                add_script_run_ctx(thread, get_script_run_ctx())
+                thread.start()
+            except Exception:
+                _PIPELINE_LOCK.release()
+                raise
 
     # ── 情况 2：后台线程运行中，局部自动刷新 ──
     if st.session_state.is_running and not st.session_state.pipeline_done:
