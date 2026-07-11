@@ -58,3 +58,6 @@ models/
 
 # Screenshots
 screenshot.png
+
+# Agent / IDE project data
+.codebuddy/
