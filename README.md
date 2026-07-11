@@ -2,6 +2,8 @@
 
 独立内容生成引擎 —— 视频下载 → 语音转录 → AI写作 → 人工化改写 → 配图生成 → 图文组装，一键完成。
 
+> 📌 **新成员 / AI 协作请先读 [`AGENTS.md`](AGENTS.md)**（项目地图），涉及流水线查 [`specs/pipeline.md`](specs/pipeline.md)，涉及验收查 [`specs/acceptance.md`](specs/acceptance.md)，涉及网页查 [`docs/WEB_REVIEW.md`](docs/WEB_REVIEW.md)，使用约定见 [`specs/USAGE.md`](specs/USAGE.md)。
+
 ## 快速开始
 
 ```bash
