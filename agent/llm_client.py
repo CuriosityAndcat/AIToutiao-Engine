@@ -76,6 +76,7 @@ class LLMClient:
         system_prompt: str = "",
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict | None = None,
     ) -> str:
         """
         调用 LLM 生成文本。
@@ -101,7 +102,7 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
 
         try:
-            response = self._client.chat.completions.create(
+            kwargs: dict = dict(
                 model=self.model,
                 messages=messages,
                 max_tokens=max_tokens or self.max_tokens,
@@ -111,6 +112,9 @@ class LLMClient:
                     else self.temperature
                 ),
             )
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            response = self._client.chat.completions.create(**kwargs)
             return response.choices[0].message.content.strip()
 
         except Exception as e:

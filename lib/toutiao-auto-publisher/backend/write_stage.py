@@ -18,6 +18,7 @@ from research import (
 )
 from evaluation import evaluate_content, QUALITY_PASS_THRESHOLD
 from models import style_label as _style_label
+from agent.guardrails import InputGuardrail, PolicyGuardrail, OutputGuardrail
 
 MAX_RESEARCH_ITERATIONS = 3       # 最大研究-重写轮数
 
@@ -81,6 +82,13 @@ def research_and_write(state, hooks: Optional[PipelineHooks] = None) -> bool:
             return False
 
     _sys.stderr.write(f"[loop] 输入文本: {len(transcript)} 字符\n"); _sys.stderr.flush()
+
+    # ── 0.0 输入护栏：检查转录文本是否包含越狱/违规指令 ──
+    _in_res = InputGuardrail().check(transcript)
+    if not _in_res.passed:
+        log(f"输入护栏拦截: {_in_res.reason}", "error")
+        stage("研究写作", "failed")
+        return False
 
     # ── 0. 执行前研究：提取关键词并搜索 ──
     stage("研究写作", "running")
@@ -254,6 +262,18 @@ def research_and_write(state, hooks: Optional[PipelineHooks] = None) -> bool:
     content = best_content
     title = best_title
 
+    # ── 3.5 输出护栏：政策合规 + 输出质量下限 ──
+    _policy_res = PolicyGuardrail().check(content)
+    if not _policy_res.passed and _policy_res.severity == "error":
+        log(f"输出护栏拦截（政策合规）: {_policy_res.reason}", "error")
+        stage("研究写作", "failed")
+        return False
+    if not _policy_res.passed:
+        log(f"输出护栏警告: {_policy_res.reason}", "warning")
+    _out_res = OutputGuardrail().check(content)
+    if not _out_res.passed:
+        log(f"输出护栏提示: {_out_res.reason}", "warning")
+
     log(
         f"✅ 研究-写作完成: 第{best_iteration}轮最佳, 评分={best_score}/100, "
         f"共{len(all_research_notes)}组网络资料",
@@ -329,8 +349,12 @@ def research_and_write(state, hooks: Optional[PipelineHooks] = None) -> bool:
                     "warning",
                 )
             else:
-                content = humanized
-                log(f"人工化改写完成 ({h_char_count} 字符)", "success")
+                _h_policy = PolicyGuardrail().check(humanized)
+                if not _h_policy.passed and _h_policy.severity == "error":
+                    log(f"人工化结果触发政策合规拦截，保留 AI 原文: {_h_policy.reason}", "warning")
+                else:
+                    content = humanized
+                    log(f"人工化改写完成 ({h_char_count} 字符)", "success")
 
             # 保存人工化版本
             output_file = state.run_dir / f"{prefix}_{state.run_id}.md"

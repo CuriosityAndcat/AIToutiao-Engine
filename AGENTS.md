@@ -35,7 +35,7 @@
 | `agent.py` | OpenAI Agents SDK `agent.py` | `Agent` 定义：`name`+`instructions`+`tools`+`handoffs`+`guards` | 框架层，未直接接生产循环 |
 | `config.py` | OpenAI Agents SDK `run.py` | `RunConfig`：`max_iterations`/`temperature`/`model`/`api_key`/`base_url`/`max_tokens` | 框架层 |
 | `graph.py` | LangGraph `StateGraph` | `AgentGraph` Evaluator-Optimizer 工作流图构建器 | ⚠ **未接生产**（`write_stage` 自带循环） |
-| `guardrails.py` | OpenAI Agents SDK `guardrails.py` | 三层护栏：`InputGuardrail` / `PolicyGuardrail` / `OutputGuardrail` | ⚠ **框架在，词表为占位，且未在 `write_stage` 调用** |
+| `guardrails.py` | OpenAI Agents SDK `guardrails.py` | 三层护栏：`InputGuardrail` / `PolicyGuardrail` / `OutputGuardrail` | ✅ **已接**（`write_stage` 输入/输出/人工化三处调用） |
 | `llm_client.py` | 对齐 `ai_writer.py` `AIWriter._call_ai()` | `LLMClient` 封装 OpenAI SDK 调 DeepSeek | 框架层，模式与 `ai_writer` 一致 |
 | `memory.py` | LangGraph Reflexion | 三层记忆：`ConversationMemory`(短期) / `WorkingMemory`(工作) / `LongTermMemory`(长期，待接入) | ✅ **`WorkingMemory` 已被 `write_stage` 使用** |
 | `runner.py` | OpenAI Agents SDK `run.py` | `Runner` 执行器，编排 `search→execute→evaluate→{PASS/END|FIXABLE|fix|BLOCKED}` | 框架层，未直接接生产 |
@@ -86,7 +86,7 @@
 | 搜索 `search_web` | ✅ 已接 | `research.py` 调用 |
 | 自愈 Evaluator-Optimizer | ✅ 已接 | `write_stage` 迭代闭环 |
 | 验收 `evaluation` | ✅ 已接 | 5 维度 + 阈值 75 |
-| 护栏 `guardrails` | ⚠ 未接 | 框架存在但词表占位、无线点 |
+| 护栏 `guardrails` | ✅ 已接 | `write_stage` 输入/输出/人工化接入三层护栏 |
 | 通用编排 `AgentGraph`/`Runner` | ⚠ 未接 | `write_stage` 自带循环，两套自愈并存 |
 
 > 结论：Harness 六组件中 **4 项已在生产运行**，真实缺口仅为「护栏未接线」与「观测未结构化」，以及文档层（本文即补此缺口）。

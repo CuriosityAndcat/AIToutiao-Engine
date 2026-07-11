@@ -15,6 +15,7 @@ import os
 import sys
 import threading
 import time
+import html
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -97,9 +98,25 @@ def _inject_css():
     st.markdown(
         """
     <style>
-        .stApp { background-color: #0D1117; }
+        :root {
+            --bg-base: #0D1117;
+            --bg-surface: #161B22;
+            --bg-elevated: #21262D;
+            --border: #30363D;
+            --border-soft: #21262D;
+            --accent: #FF6B35;
+            --accent-dark: #E85D04;
+            --success: #3FB950;
+            --danger: #F85149;
+            --warning: #D29922;
+            --info: #58A6FF;
+            --text: #E6EDF3;
+            --text-muted: #8B949E;
+            --accent-glow: rgba(255,107,53,0.3);
+        }
+        .stApp { background-color: var(--bg-base); }
         .main-header {
-            background: linear-gradient(135deg, #FF6B35 0%, #E85D04 100%);
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             font-size: 28px; font-weight: 700; text-align: center;
@@ -108,51 +125,62 @@ def _inject_css():
         .stage-indicator {
             display: inline-block; width: 14px; height: 14px;
             border-radius: 50%; margin: 0 3px;
-            border: 2px solid #30363D;
+            border: 2px solid var(--border);
         }
-        .stage-indicator.done { background: #3FB950; border-color: #3FB950; }
-        .stage-indicator.running { background: #FF6B35; border-color: #FF6B35; animation: pulse 1.2s infinite; }
-        .stage-indicator.pending { background: transparent; border-color: #30363D; }
-        .stage-indicator.failed { background: #F85149; border-color: #F85149; }
+        .stage-indicator.done { background: var(--success); border-color: var(--success); }
+        .stage-indicator.running { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s infinite; }
+        .stage-indicator.pending { background: transparent; border-color: var(--border); }
+        .stage-indicator.failed { background: var(--danger); border-color: var(--danger); }
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
         .log-container {
-            background: #161B22; border: 1px solid #30363D;
+            background: var(--bg-surface); border: 1px solid var(--border);
             border-radius: 8px; padding: 12px; max-height: 320px;
             overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 13px; color: #E6EDF3; line-height: 1.6;
+            font-size: 13px; color: var(--text); line-height: 1.6;
         }
-        .log-line.info { color: #E6EDF3; }
-        .log-line.success { color: #3FB950; }
-        .log-line.error { color: #F85149; }
-        .log-line.warning { color: #D29922; }
-        .log-line.stage { color: #58A6FF; }
+        .log-line.info { color: var(--text); }
+        .log-line.success { color: var(--success); }
+        .log-line.error { color: var(--danger); }
+        .log-line.warning { color: var(--warning); }
+        .log-line.stage { color: var(--info); }
         .result-card {
-            background: #161B22; border: 1px solid #30363D;
+            background: var(--bg-surface); border: 1px solid var(--border);
             border-radius: 12px; padding: 24px; margin-top: 20px;
         }
         .stat-badge {
-            display: inline-block; background: #21262D; border-radius: 6px;
-            padding: 4px 10px; font-size: 12px; color: #8B949E; margin-right: 6px;
+            display: inline-block; background: var(--bg-elevated); border-radius: 6px;
+            padding: 4px 10px; font-size: 12px; color: var(--text-muted); margin-right: 6px;
         }
         button[kind="primary"] {
-            background: linear-gradient(135deg, #FF6B35 0%, #E85D04 100%) !important;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%) !important;
             border: none !important; font-weight: 600 !important;
         }
         input[type="text"] {
-            background: #161B22 !important; border: 1px solid #30363D !important;
-            color: #E6EDF3 !important; border-radius: 8px !important;
+            background: var(--bg-surface) !important; border: 1px solid var(--border) !important;
+            color: var(--text) !important; border-radius: 8px !important;
         }
         .stTextInput > div > div > input:focus {
-            border-color: #FF6B35 !important; box-shadow: 0 0 0 2px rgba(255,107,53,0.3) !important;
+            border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent-glow) !important;
         }
         div[data-testid="stSidebar"] {
-            background-color: #0D1117; border-right: 1px solid #21262D;
+            background-color: var(--bg-base); border-right: 1px solid var(--border-soft);
         }
-        div[data-testid="stSidebar"] * { color: #E6EDF3; }
+        div[data-testid="stSidebar"] * { color: var(--text); }
         footer { visibility: hidden; }
+        @media (max-width: 768px) {
+            .main-header { font-size: 22px; }
+            .stage-indicator { width: 12px; height: 12px; }
+            .result-card { padding: 16px; }
+            .log-container { max-height: 260px; }
+            div[data-testid="stSidebar"] { min-width: 220px !important; }
+        }
+        @media (max-width: 480px) {
+            .main-header { font-size: 18px; }
+            .stat-badge { font-size: 11px; padding: 3px 7px; }
+        }
     </style>
     """,
         unsafe_allow_html=True,
@@ -171,8 +199,7 @@ _DEFAULTS = {
     "stage_status": {
         "下载": "pending",
         "转录": "pending",
-        "写作": "pending",
-        "改写": "pending",
+        "研究写作": "pending",
         "配图": "pending",
         "组装": "pending",
     },
@@ -190,6 +217,19 @@ _DEFAULTS = {
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# ── 进度里程碑常量（消除魔法数字）──
+_PROGRESS_MAP = {
+    "transcribe_start": 0.18,
+    "transcribe_done": 0.28,
+    "research_write_start": 0.58,
+    "images_skipped": 0.65,
+    "images_cover_done": 0.62,
+    "images_all_done": 0.67,
+    "assembly_start": 0.70,
+    "assembly_done": 0.80,
+    "pipeline_complete": 1.0,
+}
 
 # ── 日志文件持久化：每次启动生成独立日志文件 ──
 if not st.session_state.log_file_path:
@@ -249,7 +289,7 @@ else:
 # 辅助函数
 # ============================================================
 def add_log(msg: str, level: str = "info"):
-    """添加日志条目，自动裁剪到 200 行。
+    """添加日志条目，自动裁剪到 500 行。
     三通道输出：stderr（CMD 窗口） + session_state（Web UI） + 日志文件（持久化）。"""
     now = datetime.now()
     time_short = now.strftime("%H:%M:%S")
@@ -261,8 +301,8 @@ def add_log(msg: str, level: str = "info"):
     entry = {"time": time_short, "msg": msg, "level": level}
     try:
         st.session_state.logs.append(entry)
-        if len(st.session_state.logs) > 200:
-            st.session_state.logs = st.session_state.logs[-200:]
+        if len(st.session_state.logs) > 500:
+            st.session_state.logs = st.session_state.logs[-500:]
     except Exception:
         pass  # session_state 不可用时静默忽略
     # 通道 3：日志文件 → 本地持久化（同步写入，确保不丢失）
@@ -803,7 +843,7 @@ def step_transcribe(state: PipelineState) -> bool:
     MODEL_MAP = {"tiny": "openai/whisper-tiny", "small": "openai/whisper-small",
                  "base": "openai/whisper-base", "medium": "openai/whisper-medium"}
 
-    st.session_state.progress_pct = 0.18
+    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_start"]
 
     # ── SenseVoice 转录（中文最优，唯一后端） ──
     _sys.stderr.write("[transcribe] 使用 SenseVoice 后端\n"); _sys.stderr.flush()
@@ -903,7 +943,7 @@ def _transcribe_transformers(video_path, backend, model, model_map, state):
     add_log(f"转录完成 ({len(text)} 字符)", "success")
     set_stage("转录", "done")
     state.mark_done("transcribe")
-    st.session_state.progress_pct = 0.28
+    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_done"]
     return True
 
 
@@ -973,7 +1013,7 @@ def _transcribe_sensevoice(video_path, state):
     add_log(f"转录完成 ({len(text)} 字符)", "success")
     set_stage("转录", "done")
     state.mark_done("transcribe")
-    st.session_state.progress_pct = 0.28
+    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_done"]
     return True
 
 
@@ -1074,7 +1114,7 @@ def step_images(state: PipelineState) -> bool:
         set_stage("配图", "done")
         state.mark_done("generate_images")
         state.outputs["images_injected"] = False
-        st.session_state.progress_pct = 0.65
+        st.session_state.progress_pct = _PROGRESS_MAP["images_skipped"]
         return True
 
     _sys.stderr.write("[images] step_images 开始（Pollinations）\n"); _sys.stderr.flush()
@@ -1098,7 +1138,7 @@ def step_images(state: PipelineState) -> bool:
 
     images_dir = state.run_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-    st.session_state.progress_pct = 0.58
+    st.session_state.progress_pct = _PROGRESS_MAP["research_write_start"]
 
     cover_path = None
     inline_paths = []
@@ -1122,7 +1162,7 @@ def step_images(state: PipelineState) -> bool:
         else:
             add_log("封面图生成失败（Pollinations 无响应或超时）", "warning")
 
-        st.session_state.progress_pct = 0.62
+        st.session_state.progress_pct = _PROGRESS_MAP["images_cover_done"]
 
         # ── 2. 生成内文配图 ──
         inline_prompts = _build_inline_prompts(title, content, count=2)
@@ -1141,7 +1181,7 @@ def step_images(state: PipelineState) -> bool:
             else:
                 add_log(f"内文配图 {idx+1} 生成失败", "warning")
 
-        st.session_state.progress_pct = 0.67
+        st.session_state.progress_pct = _PROGRESS_MAP["images_all_done"]
 
         # ── 3. 汇总结果 ──
         success_count = len(inline_paths)
@@ -1172,7 +1212,7 @@ def step_images(state: PipelineState) -> bool:
     state.outputs["images_injected"] = images_injected
     set_stage("配图", "done")
     state.mark_done("generate_images")
-    st.session_state.progress_pct = 0.70
+    st.session_state.progress_pct = _PROGRESS_MAP["assembly_start"]
 
     if not images_injected:
         add_log("⚠️ 本篇文章无配图，最终稿件为纯文本版", "warning")
@@ -1258,7 +1298,7 @@ def step_assemble(state: PipelineState) -> bool:
     set_stage("组装", "running")
     add_log("阶段5/5: 图文最终组装", "stage")
 
-    st.session_state.progress_pct = 0.80
+    st.session_state.progress_pct = _PROGRESS_MAP["assembly_done"]
 
     # 确保有最终文件
     final_file = state.outputs.get("assembled_file") or state.outputs.get("generated_file")
@@ -1283,7 +1323,7 @@ def step_assemble(state: PipelineState) -> bool:
 
     set_stage("组装", "done")
     state.mark_done("assemble")
-    st.session_state.progress_pct = 1.0
+    st.session_state.progress_pct = _PROGRESS_MAP["pipeline_complete"]
     return True
 
 
@@ -1377,18 +1417,10 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
         _sys.stderr.write(f"[pipeline] 流水线结束, all_done={all(state.is_done(s[0]) for s in stages)}\n"); _sys.stderr.flush()
 
     except Exception as e:
-        _sys.stderr.write(f"[pipeline] Exception 捕获: {e}\n"); _sys.stderr.flush()
-        add_log(f"流水线发生未预期异常: {e}", "error")
+        _sys.stderr.write(f"[pipeline] 错误: {e}\n"); _sys.stderr.flush()
+        add_log(f"流水线发生错误: {e}", "error")
         traceback.print_exc()
         st.session_state.pipeline_error = str(e)
-    except BaseException as e:
-        # 捕获 SystemExit / KeyboardInterrupt 等致命异常，防止整进程崩溃
-        _sys.stderr.write(f"[pipeline] 致命异常 BaseException: {type(e).__name__}: {e}\n"); _sys.stderr.flush()
-        traceback.print_exc()
-        st.session_state.pipeline_error = f"致命错误({type(e).__name__}): {e}"
-        st.session_state.is_running = False
-        st.session_state.pipeline_done = True
-        raise  # 重新抛出，让上层 main() 的 BaseException 处理器最终兜底
     finally:
         st.session_state.is_running = False
         st.session_state.pipeline_done = True
@@ -1532,6 +1564,7 @@ def _save_env(api_key: str, api_base: str, api_model: str):
             new_lines.append(f"{k}={v}")
 
     env_path.write_text("\n".join(new_lines), encoding="utf-8")
+    st.info("⚠️ API Key 已明文保存到 .env 文件。仅本地使用，请勿分享该文件。", icon="🔒")
     # 更新环境变量
     for k, v in updated.items():
         os.environ[k] = v
@@ -1549,7 +1582,7 @@ def render_main():
     is_running = st.session_state.is_running
     has_result = st.session_state.result_data is not None
 
-    status_color = "#D29922" if is_running else ("#3FB950" if has_result else "#8B949E")
+    status_color = "var(--warning)" if is_running else ("var(--success)" if has_result else "var(--text-muted)")
     status_text = "● 运行中" if is_running else ("● 已完成" if has_result else "● 就绪")
     st.markdown(
         f'<div style="text-align:center;margin-bottom:16px;"><span style="color:{status_color};font-size:14px;">'
@@ -1561,11 +1594,14 @@ def render_main():
     col1, col2, col3 = st.columns([5, 1.5, 1])
     with col1:
         url = st.text_input(
-            "抖音视频链接",
+            "视频链接（抖音 / YouTube / B站 等）",
             key="url_input",
             placeholder="直接粘贴抖音复制的分享内容即可，自动提取链接",
             label_visibility="collapsed",
         )
+    # 空状态引导
+    if not url or not url.strip():
+        st.caption("💡 在此粘贴抖音 / YouTube / B站等视频链接或分享内容即可开始")
     # 实时 URL 检测提示（纯 UI 预览，不阻断流水线）
     if url and url.strip():
         raw = url.strip()
@@ -1574,7 +1610,7 @@ def render_main():
         if detected and detected != raw:
             st.caption(f"🔗 检测到链接：`{detected}`")
         elif detected is None:
-            st.caption("⚠️ 未检测到有效链接，请粘贴抖音分享内容")
+            st.caption("⚠️ 未检测到有效链接，请粘贴视频分享内容或链接")
 
     with col2:
         generate_btn = st.button("▶ 一键生成", use_container_width=True,
@@ -1606,10 +1642,12 @@ def render_progress():
     for i, name in enumerate(stages_order):
         status = st.session_state.stage_status.get(name, "pending")
         with cols[i]:
+            emoji_map = {"done": "✅", "running": "⏳", "failed": "❌", "pending": "⬜"}
+            status_emoji = emoji_map.get(status, "⬜")
             indicator_html = f"""
             <div style="text-align:center;">
                 <div class="stage-indicator {status}" style="display:inline-block;"></div>
-                <div style="font-size:11px;color:#8B949E;margin-top:4px;">{name}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">{status_emoji} {name}</div>
             </div>
             """
             st.markdown(indicator_html, unsafe_allow_html=True)
@@ -1642,11 +1680,13 @@ def render_logs():
         emoji = _emoji_for_level(entry["level"])
         html_lines.append(
             f'<div class="log-line {entry["level"]}">'
-            f'[{entry["time"]}] {emoji} {entry["msg"]}</div>'
+            f'[{entry["time"]}] {emoji} {html.escape(entry["msg"])}</div>'
         )
     html_lines.append("</div>")
 
     st.markdown("\n".join(html_lines), unsafe_allow_html=True)
+    if len(logs) >= 500:
+        st.caption("💡 界面仅显示最近 500 行，完整日志见 `log/` 目录")
 
 
 # ============================================================
@@ -1813,7 +1853,7 @@ def main():
     if generate_btn and url.strip():
         processed = st.session_state.get("processed_url", "")
         if not processed:
-            st.error("❌ 未在输入中找到有效的抖音链接，请粘贴包含 https://v.douyin.com/... 的分享内容")
+            st.error("❌ 未在输入中找到有效的视频链接，请粘贴包含链接的分享内容")
         elif st.session_state.is_running:
             st.warning("⏳ 流水线正在执行中，请等待完成后再试")
         elif not _PIPELINE_LOCK.acquire(blocking=False):
@@ -1831,7 +1871,7 @@ def main():
                 # 确保转录引擎在主线程完成首次加载（避免子线程 import 死锁）
                 # 首次约 45 秒，之后瞬间返回
                 if _TORCH_MOD is None or _PIPELINE_FN is None:
-                    with st.spinner("⏳ 首次启动，正在加载 AI 引擎（约 45 秒）……"):
+                    with st.spinner("⏳ 首次启动，正在加载 AI 引擎（PyTorch + Transformers，约 45 秒）……"):
                         _ensure_transcribe_imports()
 
                 def _run():
