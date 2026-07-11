@@ -22,6 +22,25 @@ class ContentStyle(str, Enum):
     DISCUSSION = "discussion"             # 💬 互动讨论型：开放式提问、"你怎么看"为主轴、撩互动
 
 
+def style_label(style_value) -> str:
+    """将 style 标识符转为中文标签。
+
+    兼容 'general' / ContentStyle.GENERAL（枚举） / 'ContentStyle.general' 等形式。
+    """
+    s = style_value.value if hasattr(style_value, "value") else str(style_value)
+    mapping = {
+        "story_narrative": "评书故事型",
+        "military": "军事深度分析型",
+        "sharp_commentary": "冷静克制型",
+        "data_list": "硬核论证型",
+        "flash_news": "快讯速报型",
+        "discussion": "互动讨论型",
+        "general": "通用风格",
+    }
+    key = s.split(".")[-1] if "." in s else s
+    return mapping.get(key, s)
+
+
 class GenerateRequest(BaseModel):
     topic: str = Field(..., description="主题或关键词")
     content_type: ContentType = ContentType.ARTICLE
