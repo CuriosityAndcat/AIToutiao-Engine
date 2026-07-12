@@ -89,7 +89,7 @@
 | 护栏 `guardrails` | ✅ 已接 | `write_stage` 输入/输出/人工化接入三层护栏 |
 | 通用编排 `AgentGraph`/`Runner` | ⚠ 未接 | `write_stage` 自带循环，两套自愈并存 |
 
-> 结论：Harness 六组件中 **4 项已在生产运行**，真实缺口仅为「护栏未接线」与「观测未结构化」，以及文档层（本文即补此缺口）。
+> 结论：Harness 六组件中 **5 项已在生产运行**（记忆 / 搜索 / 自愈 / 验收 / 护栏），仅余「通用编排 `AgentGraph`/`Runner` 未接」（`write_stage` 自带循环，两套自愈并存）与「观测未结构化」两项缺口。
 
 ---
 
@@ -105,4 +105,24 @@
 
 ---
 
-*生成时间：2026-07-11 · 本文为「项目目录方案」文档，不含任何代码改动。*
+## 项目进度（Agentic Workflow 批次）
+
+> 按 agentic workflow 复杂度分级推进，已完成项均经「执行→反思→验证」闭环。
+
+| 批次 | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| 批次 A | 文档体系（AGENTS.md + specs + 网页评审 WEB_REVIEW） | ✅ 完成 | `5961330` |
+| E-1 | 网页快速修复（9 项：C5 文案 / C6 日志 / C9 spinner / E13 图标 / E14 空状态） | ✅ 完成 | 早前提交 |
+| 批次 B | 护栏接线（Input/Policy/Output 三层接入 `write_stage`） | ✅ 完成 | `5c1b643` |
+| D11+C8 | CSS 颜色 token 化（`:root` 变量替换 16 处硬编码）+ 响应式 `@media` 断点 | ✅ 完成 | `5c1b643` |
+| E-3 | 包级拆分（`engine_app.py` 1899 行 → `ui/` 模块），Tier 3 需先出 Plan | ⏳ 待规划 | — |
+| 批次 C | `graph.py` 通用编排决策（AgentGraph/Runner 接入生产循环） | ⏳ 待立项 | — |
+| 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | — |
+
+**未跟踪内容**（尚未提交，留待批次 D 评审）：
+- `scripts/`（4 py：analyze_style / curate_corpus / synthesize_style / toutiao_collect）
+- `docs/采集/`（85 md）、`docs/风格分析/`（46 文件）—— 内容研究产出
+
+---
+
+*最后更新：2026-07-12 · 项目地图持续维护，反映 Harness 六组件接入状态与批次进度。*
