@@ -115,13 +115,14 @@
 | E-1 | 网页快速修复（9 项：C5 文案 / C6 日志 / C9 spinner / E13 图标 / E14 空状态） | ✅ 完成 | 早前提交 |
 | 批次 B | 护栏接线（Input/Policy/Output 三层接入 `write_stage`） | ✅ 完成 | `5c1b643` |
 | D11+C8 | CSS 颜色 token 化（`:root` 变量替换 16 处硬编码）+ 响应式 `@media` 断点 | ✅ 完成 | `5c1b643` |
+| **E-2** | **写作风格切换**：屏蔽 military/sharp/data/flash/discussion，接入 `docs/风格分析` 4 位作者（包明说默认+晋说+全球档案馆+听风的蚕），新增 3 prompt 模块并复用 `_red_lines` 红线 | ✅ 完成 | 本轮 |
 | E-3 | 包级拆分（`engine_app.py` 1899 行 → `ui/` 模块），Tier 3 需先出 Plan | ⏳ 待规划 | — |
 | 批次 C | `graph.py` 通用编排决策（AgentGraph/Runner 接入生产循环） | ⏳ 待立项 | — |
 | 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | — |
 
 **未跟踪内容**（尚未提交，留待批次 D 评审）：
 - `scripts/`（4 py：analyze_style / curate_corpus / synthesize_style / toutiao_collect）
-- `docs/采集/`（85 md）、`docs/风格分析/`（46 文件）—— 内容研究产出
+- `docs/采集/`（85 md）、`docs/风格分析/`（46 文件）—— 内容研究产出；其中 `风格分析/` 已落地为 E-2 的生产风格系统（包明说/晋说/全球档案馆/听风的蚕）
 
 ---
 

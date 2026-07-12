@@ -1,13 +1,11 @@
 """
 AI 内容生成模块
-支持微头条和文章两种内容类型，支持 7 种微头条内容风格：
-  - military:         你的专属军事深度分析型（七层递进法）
-  - story_narrative:  对标「听风的蚕」军事评书型
-  - sharp_commentary: 对标「牛弹琴」冷静克制型
-  - data_list:        对标「静思有我」硬核论证型
-  - flash_news:       快讯速报型
-  - discussion:       互动讨论型
-  - general:          通用风格
+支持微头条和文章两种内容类型，支持 4 种微头条内容风格（对标 docs/风格分析 作者）：
+  - baoming_shuo:    包明说（反差悬念型，默认）
+  - jin_shuo:        晋说（乡愁叙事型）
+  - global_archive:  全球档案馆（馆长悬疑型）
+  - story_narrative: 听风的蚕（评书故事型）
+  - general:         通用风格（代码层回退，不在 UI 暴露）
 通过 STYLE_ROUTER 字典实现 O(1) 风格路由。
 调用 OpenAI 兼容接口（DeepSeek API）。
 
@@ -37,18 +35,14 @@ from models import ContentType, ContentStyle
 
 from prompts import (
     TOUTIE_PROMPT,
-    SYSTEM_PROMPT_MILITARY,
-    MILITARY_TOUTIE_PROMPT,
+    SYSTEM_PROMPT_BAOMING_SHUO,
+    BAOMING_SHUO_TOUTIE_PROMPT,
+    SYSTEM_PROMPT_JIN_SHUO,
+    JIN_SHUO_TOUTIE_PROMPT,
+    SYSTEM_PROMPT_GLOBAL_ARCHIVE,
+    GLOBAL_ARCHIVE_TOUTIE_PROMPT,
     SYSTEM_PROMPT_STORY_NARRATIVE,
     STORY_NARRATIVE_PROMPT,
-    SYSTEM_PROMPT_SHARP_COMMENTARY,
-    SHARP_COMMENTARY_PROMPT,
-    SYSTEM_PROMPT_DATA_LIST,
-    DATA_LIST_PROMPT,
-    SYSTEM_PROMPT_FLASH_NEWS,
-    FLASH_NEWS_PROMPT,
-    SYSTEM_PROMPT_DISCUSSION,
-    DISCUSSION_PROMPT,
     MILITARY_RED_LINES,
     HUMANIZE_SYSTEM_PROMPT,
     HUMANIZE_USER_PROMPT,
@@ -63,13 +57,11 @@ from prompts import (
 
 STYLE_ROUTER = {
     # (system_prompt, user_prompt, temperature)
-    ContentStyle.MILITARY:         (SYSTEM_PROMPT_MILITARY,         MILITARY_TOUTIE_PROMPT,    0.7),
-    ContentStyle.GENERAL:          (None,                           TOUTIE_PROMPT,             0.7),
-    ContentStyle.STORY_NARRATIVE:  (SYSTEM_PROMPT_STORY_NARRATIVE,  STORY_NARRATIVE_PROMPT,    0.85),
-    ContentStyle.SHARP_COMMENTARY: (SYSTEM_PROMPT_SHARP_COMMENTARY, SHARP_COMMENTARY_PROMPT,   0.6),
-    ContentStyle.DATA_LIST:        (SYSTEM_PROMPT_DATA_LIST,        DATA_LIST_PROMPT,          0.5),
-    ContentStyle.FLASH_NEWS:       (SYSTEM_PROMPT_FLASH_NEWS,       FLASH_NEWS_PROMPT,         0.5),
-    ContentStyle.DISCUSSION:       (SYSTEM_PROMPT_DISCUSSION,       DISCUSSION_PROMPT,         0.7),
+    ContentStyle.BAOMING_SHUO:     (SYSTEM_PROMPT_BAOMING_SHUO,     BAOMING_SHUO_TOUTIE_PROMPT,    0.7),
+    ContentStyle.JIN_SHUO:         (SYSTEM_PROMPT_JIN_SHUO,         JIN_SHUO_TOUTIE_PROMPT,        0.7),
+    ContentStyle.GLOBAL_ARCHIVE:   (SYSTEM_PROMPT_GLOBAL_ARCHIVE,   GLOBAL_ARCHIVE_TOUTIE_PROMPT,  0.75),
+    ContentStyle.STORY_NARRATIVE:  (SYSTEM_PROMPT_STORY_NARRATIVE,  STORY_NARRATIVE_PROMPT,        0.85),
+    ContentStyle.GENERAL:          (None,                           TOUTIE_PROMPT,                 0.7),
 }
 
 
@@ -127,7 +119,7 @@ class AIWriter:
         Args:
             topic: 主题文本（转录原文或关键词）
             max_chars: 最大字数
-            content_style: 内容风格（支持 7 种：military/story_narrative/sharp_commentary/data_list/flash_news/discussion/general）
+            content_style: 内容风格（支持 4 种：baoming_shuo/jin_shuo/global_archive/story_narrative，外加 general 回退）
         """
         # 字典路由：O(1) 查找 → 获取 (system_prompt, user_prompt_template, temperature)
         system_prompt, user_template, temperature = STYLE_ROUTER.get(
@@ -256,7 +248,7 @@ class AIWriter:
         title: str,
         content: str,
         output_dir: str,
-        content_style: str = "story_narrative",
+        content_style: str = "baoming_shuo",
         prompt_lang: str = "cn",
     ) -> dict:
         """
@@ -272,7 +264,7 @@ class AIWriter:
             title: 文章标题
             content: 文章正文
             output_dir: 图片输出目录
-            content_style: 内容风格（military/story_narrative/sharp_commentary/...）
+            content_style: 内容风格（baoming_shuo/jin_shuo/global_archive/story_narrative/general）
             prompt_lang: Prompt 语言模式
                         'cn': 中文军事视觉隐喻（推荐，默认）
                         'en': 英文新闻摄影风
@@ -438,7 +430,7 @@ class AIWriter:
         content: str,
         output_dir: str,
         num_images: int = 3,
-        content_style: str = "story_narrative",
+        content_style: str = "baoming_shuo",
         prompt_lang: str = "cn",
     ) -> list:
         """
@@ -507,7 +499,7 @@ class AIWriter:
         title: str,
         content: str,
         output_dir: str,
-        content_style: str = "story_narrative",
+        content_style: str = "baoming_shuo",
         num_inline: int = 3,
         prompt_lang: str = "cn",
     ) -> dict:

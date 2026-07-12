@@ -138,6 +138,30 @@ _STYLE_TEMPLATES_CN = {
         "色调：深色基底+暖色点缀，新闻纪实感。"
         "比例16:9，横版封面。"
     ),
+    "baoming_shuo": (
+        "今日头条时政微头条封面图，包明说反差悬念风格。"
+        "画面主体：{visual_metaphor}。"
+        "背景暗色世界地图投影与破碎档案，暗示反差与悬念。"
+        "光影：一道强烈侧光从右上角打下，主体清晰、背景深暗，制造冷峻冲击力。"
+        "色调：深蓝+暗红对冲，金属与纸面质感对比，电影级布光。"
+        "文字区域留白在画面上方。比例16:9，横版封面，视觉冲击力强。"
+    ),
+    "jin_shuo": (
+        "今日头条文化历史微头条封面图，晋说乡愁叙事风格。"
+        "画面主体：{visual_metaphor}。"
+        "背景为厚重古籍、青砖灰瓦与千年历史纹理的模糊投影。"
+        "光影：温暖斜阳从窗棂斜射，柔和而怀旧，明暗过渡自然。"
+        "色调：暖褐+青灰，陈年质感，犹如翻开的史册。"
+        "比例16:9，横版封面，温润而有厚度。"
+    ),
+    "global_archive": (
+        "今日头条硬核科普微头条封面图，全球档案馆馆长悬疑风格。"
+        "画面主体：{visual_metaphor}。"
+        "背景为昏暗档案室，墙上挂满地图与文件，聚光灯自上方打下。"
+        "光影：戏剧性聚光，主体明亮、四周没入黑暗，制造悬疑感。"
+        "色调：深蓝+琥珀色档案灯，金属卷宗与地球仪质感。"
+        "比例16:9，横版封面，扑朔迷离的揭秘氛围。"
+    ),
 }
 
 # 中文内文配图模板（三级差异化，对应叙事功能）
@@ -208,6 +232,24 @@ _STYLE_TEMPLATES = {
         "Balanced composition, natural photojournalism lighting, clean documentary aesthetic, "
         "8K resolution, versatile news wire quality"
     ),
+    "baoming_shuo": (
+        "A dramatic photojournalism photograph of {visual_metaphor}. "
+        "Deep blue and crimson amber palette, harsh side key light from upper right creating "
+        "stark contrast with deep shadows, metallic and paper textures in tension, "
+        "cinematic lighting, 8K, editorial news quality"
+    ),
+    "jin_shuo": (
+        "A warm heritage documentary photograph of {visual_metaphor}. "
+        "Amber and slate-grey tones, soft slanted sunlight through lattice window, "
+        "aged book and brick texture, nostalgic historical atmosphere, "
+        "8K, cultural feature-story quality"
+    ),
+    "global_archive": (
+        "A mysterious archival photograph of {visual_metaphor}. "
+        "Deep blue and amber reading-lamp palette, dramatic spotlight from above, "
+        "dim archive room with maps and files around, suspenseful reveal mood, "
+        "8K, investigative documentary quality"
+    ),
 }
 
 # 内文配图模板（三级差异化，新闻摄影/战地纪录风格）
@@ -273,8 +315,8 @@ class CoverPromptBuilder:
         """
         Args:
             style: 内容风格，决定视觉模板
-                  可选: military / story_narrative / sharp_commentary / data_list
-                        flash_news / discussion / general
+                  可选: baoming_shuo / jin_shuo / global_archive / story_narrative / general
+                        （未知风格回退到 general）
             prompt_lang: Prompt 语言模式
                         'cn': 中文军事视觉隐喻（推荐，默认）
                         'en': 英文新闻摄影风

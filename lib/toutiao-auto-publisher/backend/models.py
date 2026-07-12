@@ -12,29 +12,29 @@ class ContentType(str, Enum):
 
 
 class ContentStyle(str, Enum):
-    """内容风格枚举 — 对标今日头条头部军事/时政账号"""
-    GENERAL = "general"                   # 通用风格（原有 TOUTIE_PROMPT）
-    MILITARY = "military"                 # 🔥 你的专属：军事深度分析型，七层递进+证据驱动+博弈拆解
-    STORY_NARRATIVE = "story_narrative"   # 📖 对标「听风的蚕」：军事评书，悬念铺陈+通俗比喻+方言韵味
-    SHARP_COMMENTARY = "sharp_commentary" # ✒️ 对标「牛弹琴」：冷静克制，事实为主+观点为辅+娓娓道来
-    DATA_LIST = "data_list"               # 📊 对标「静思有我」：硬核论证，数据驱动+逻辑链+论文质感
-    FLASH_NEWS = "flash_news"             # ⚡ 快讯速报型：3段讲清、信息密度极高、零铺垫
-    DISCUSSION = "discussion"             # 💬 互动讨论型：开放式提问、"你怎么看"为主轴、撩互动
+    """内容风格枚举 — 对标 docs/风格分析 中 4 位头部作者（去AI味仿写方案）。
+
+    默认风格为 BAOMING_SHUO（包明说，去AI味评分最高 85.0）。
+    GENERAL 仅作代码层回退（未知风格 / 文章通用），不在 UI 选择器暴露。
+    """
+    BAOMING_SHUO = "baoming_shuo"            # 🔥 包明说：反差+悬念+短句机枪感+数据佐证（默认）
+    JIN_SHUO = "jin_shuo"                    # 📚 晋说：悬念+数字+乡愁叙事+口语吐槽
+    GLOBAL_ARCHIVE = "global_archive"        # 🏛️ 全球档案馆：自称馆长、悬念+数据+情绪推演
+    STORY_NARRATIVE = "story_narrative"      # 📖 听风的蚕：军事评书，悬念铺陈+通俗比喻
+    GENERAL = "general"                      # 📝 通用风格（代码层回退，不在 UI 暴露）
 
 
 def style_label(style_value) -> str:
     """将 style 标识符转为中文标签。
 
-    兼容 'general' / ContentStyle.GENERAL（枚举） / 'ContentStyle.general' 等形式。
+    兼容 'baoming_shuo' / ContentStyle.BAOMING_SHUO（枚举） / 'ContentStyle.baoming_shuo' 等形式。
     """
     s = style_value.value if hasattr(style_value, "value") else str(style_value)
     mapping = {
-        "story_narrative": "评书故事型",
-        "military": "军事深度分析型",
-        "sharp_commentary": "冷静克制型",
-        "data_list": "硬核论证型",
-        "flash_news": "快讯速报型",
-        "discussion": "互动讨论型",
+        "baoming_shuo": "包明说（反差悬念型）",
+        "jin_shuo": "晋说（乡愁叙事型）",
+        "global_archive": "全球档案馆（馆长悬疑型）",
+        "story_narrative": "听风的蚕（评书故事型）",
         "general": "通用风格",
     }
     key = s.split(".")[-1] if "." in s else s

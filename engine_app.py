@@ -95,10 +95,14 @@ def _ensure_transcribe_imports():
 # 自定义 CSS（暗色军事风）
 # ============================================================
 def _inject_css():
+    """注入全局样式。统一 token 体系（颜色/间距/圆角/字体），
+    支持 data-theme 浅色切换，含卡片阴影、阶段连接线、响应式。"""
     st.markdown(
         """
     <style>
+        /* ── 设计 Token：暗色（默认） ── */
         :root {
+            /* 颜色 */
             --bg-base: #0D1117;
             --bg-surface: #161B22;
             --bg-elevated: #21262D;
@@ -113,8 +117,37 @@ def _inject_css():
             --text: #E6EDF3;
             --text-muted: #8B949E;
             --accent-glow: rgba(255,107,53,0.3);
+            --shadow-card: 0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.2);
+            --shadow-panel: 0 1px 2px rgba(0,0,0,0.35);
+            /* 间距 */
+            --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+            --space-4: 16px; --space-5: 24px; --space-6: 32px;
+            /* 圆角 */
+            --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
+            /* 字体 */
+            --font-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+            --font-mono: 'Consolas', 'Courier New', monospace;
         }
-        .stApp { background-color: var(--bg-base); }
+        /* ── 设计 Token：浅色主题（data-theme="light" 覆盖） ── */
+        [data-theme="light"] {
+            --bg-base: #F4F6F9;
+            --bg-surface: #FFFFFF;
+            --bg-elevated: #EEF1F5;
+            --border: #D6DBE1;
+            --border-soft: #E4E8ED;
+            --accent: #E0561C;
+            --accent-dark: #C24A12;
+            --success: #1A7F37;
+            --danger: #CF222E;
+            --warning: #9A6700;
+            --info: #0969DA;
+            --text: #1F2328;
+            --text-muted: #656D76;
+            --accent-glow: rgba(224,86,28,0.18);
+            --shadow-card: 0 1px 3px rgba(31,35,40,0.12), 0 4px 12px rgba(31,35,40,0.08);
+            --shadow-panel: 0 1px 2px rgba(31,35,40,0.10);
+        }
+        .stApp, .stApp .main, [data-testid="stAppViewContainer"] { background-color: var(--bg-base); color: var(--text); }
         .main-header {
             background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
             -webkit-background-clip: text;
@@ -122,37 +155,78 @@ def _inject_css():
             font-size: 28px; font-weight: 700; text-align: center;
             padding: 10px 0; margin-bottom: 5px;
         }
+        /* ── 状态药丸：替代 inline color 硬编码 ── */
+        .status-pill {
+            display: inline-block; text-align: center; font-size: 14px;
+            padding: 2px 12px; border-radius: 999px; margin-bottom: var(--space-4);
+            font-family: var(--font-sans);
+        }
+        .status-pill.running  { color: var(--warning);  background: var(--bg-elevated); border: 1px solid var(--warning); }
+        .status-pill.done     { color: var(--success);  background: var(--bg-elevated); border: 1px solid var(--success); }
+        .status-pill.ready    { color: var(--text-muted); background: var(--bg-elevated); border: 1px solid var(--border); }
+        /* ── 阶段指示灯 ── */
         .stage-indicator {
             display: inline-block; width: 14px; height: 14px;
-            border-radius: 50%; margin: 0 3px;
-            border: 2px solid var(--border);
+            border-radius: 50%; margin: 0 3px; border: 2px solid var(--border);
         }
         .stage-indicator.done { background: var(--success); border-color: var(--success); }
         .stage-indicator.running { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s infinite; }
         .stage-indicator.pending { background: transparent; border-color: var(--border); }
         .stage-indicator.failed { background: var(--danger); border-color: var(--danger); }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        /* ── 阶段流程（灯 + 连接线） ── */
+        .stage-flow {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            margin: var(--space-3) 0 var(--space-4);
         }
+        .stage-step { flex: 1; text-align: center; position: relative; }
+        .stage-step:not(:last-child)::after {
+            content: ""; position: absolute; top: 8px; left: 50%; width: 100%;
+            height: 2px; background: var(--border); z-index: 0;
+        }
+        .stage-step.done:not(:last-child)::after { background: var(--success); }
+        .stage-step .dot {
+            position: relative; z-index: 1; display: inline-block;
+            width: 16px; height: 16px; border-radius: 50%;
+            border: 2px solid var(--border); background: var(--bg-surface);
+        }
+        .stage-step.done .dot  { background: var(--success); border-color: var(--success); }
+        .stage-step.running .dot { background: var(--accent); border-color: var(--accent); animation: pulse 1.2s infinite; }
+        .stage-step.failed .dot { background: var(--danger); border-color: var(--danger); }
+        .stage-step .label { font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: var(--font-sans); }
+        .stage-step .state { font-size: 10px; margin-top: 1px; font-family: var(--font-sans); }
+        .stage-step.done .state { color: var(--success); }
+        .stage-step.running .state { color: var(--accent); }
+        .stage-step.failed .state { color: var(--danger); }
+        .stage-step.pending .state { color: var(--text-muted); }
+        /* ── 日志容器 ── */
         .log-container {
             background: var(--bg-surface); border: 1px solid var(--border);
-            border-radius: 8px; padding: 12px; max-height: 320px;
-            overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace;
+            border-radius: var(--radius-md); padding: var(--space-3); max-height: 320px;
+            overflow-y: auto; font-family: var(--font-mono);
             font-size: 13px; color: var(--text); line-height: 1.6;
+            box-shadow: var(--shadow-panel);
         }
         .log-line.info { color: var(--text); }
         .log-line.success { color: var(--success); }
         .log-line.error { color: var(--danger); }
         .log-line.warning { color: var(--warning); }
         .log-line.stage { color: var(--info); }
+        /* ── 卡片 / 面板 ── */
         .result-card {
             background: var(--bg-surface); border: 1px solid var(--border);
-            border-radius: 12px; padding: 24px; margin-top: 20px;
+            border-radius: var(--radius-lg); padding: var(--space-5); margin-top: var(--space-4);
+            box-shadow: var(--shadow-card);
+        }
+        .panel {
+            background: var(--bg-surface); border: 1px solid var(--border);
+            border-radius: var(--radius-lg); padding: var(--space-4);
+            box-shadow: var(--shadow-panel); margin-bottom: var(--space-4);
         }
         .stat-badge {
-            display: inline-block; background: var(--bg-elevated); border-radius: 6px;
-            padding: 4px 10px; font-size: 12px; color: var(--text-muted); margin-right: 6px;
+            display: inline-block; background: var(--bg-elevated); border-radius: var(--radius-sm);
+            padding: 4px 10px; font-size: 12px; color: var(--text-muted);
+            margin-right: 6px; margin-bottom: 4px; font-family: var(--font-sans);
         }
         button[kind="primary"] {
             background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%) !important;
@@ -160,7 +234,7 @@ def _inject_css():
         }
         input[type="text"] {
             background: var(--bg-surface) !important; border: 1px solid var(--border) !important;
-            color: var(--text) !important; border-radius: 8px !important;
+            color: var(--text) !important; border-radius: var(--radius-md) !important;
         }
         .stTextInput > div > div > input:focus {
             border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent-glow) !important;
@@ -170,21 +244,69 @@ def _inject_css():
         }
         div[data-testid="stSidebar"] * { color: var(--text); }
         footer { visibility: hidden; }
+        /* ── 标题分级统一 ── */
+        .section-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: var(--space-3); font-family: var(--font-sans); }
+        /* ── 结果操作按钮：窄屏降级 ── */
+        @media (max-width: 900px) { .btn-grid > div { flex-basis: 50%; } }
+        @media (max-width: 540px) { .btn-grid > div { flex-basis: 100%; } }
+        /* ── 响应式：平板 ── */
         @media (max-width: 768px) {
             .main-header { font-size: 22px; }
-            .stage-indicator { width: 12px; height: 12px; }
-            .result-card { padding: 16px; }
+            .result-card { padding: var(--space-4); }
             .log-container { max-height: 260px; }
             div[data-testid="stSidebar"] { min-width: 220px !important; }
+            .stage-step .label { font-size: 10px; }
         }
-        @media (max-width: 480px) {
+        /* ── 响应式：手机 ── */
+        @media (max-width: 600px) {
             .main-header { font-size: 18px; }
+            .stTextInput > div > div > input { font-size: 14px; padding: 6px 10px; }
+            button { font-size: 13px !important; }
+            .result-card { padding: var(--space-3); }
             .stat-badge { font-size: 11px; padding: 3px 7px; }
+            .log-container { max-height: 220px; }
         }
     </style>
     """,
         unsafe_allow_html=True,
     )
+
+    # ── 主题切换控件：注入一次，仅改 <html data-theme> 属性 ──
+    #    不改动 Streamlit 管理节点，避免闪烁；状态持久化到 localStorage。
+    from streamlit.components.v1 import html as _components_html
+    _theme_toggle = """
+    <script>
+    (function() {
+      const root = document.documentElement;
+      const saved = localStorage.getItem('engine_theme') || 'dark';
+      root.setAttribute('data-theme', saved);
+      function ensure() {
+        if (!document.getElementById('theme-switch')) {
+          const box = document.querySelector('[data-testid="stSidebarNav"]') || document.querySelector('[data-testid="stSidebar"]');
+          if (!box) return;
+          const wrap = document.createElement('div');
+          wrap.id = 'theme-switch';
+          wrap.style.cssText = 'padding:10px 12px;margin-top:8px;';
+          const btn = document.createElement('button');
+          btn.textContent = (root.getAttribute('data-theme') === 'light') ? '🌙 暗色' : '☀️ 浅色';
+          btn.style.cssText = 'width:100%;padding:6px 10px;border-radius:8px;border:1px solid #8884;background:#8882;color:inherit;cursor:pointer;font-size:13px;';
+          btn.onclick = function() {
+            const next = (root.getAttribute('data-theme') === 'light') ? 'dark' : 'light';
+            root.setAttribute('data-theme', next);
+            localStorage.setItem('engine_theme', next);
+            btn.textContent = (next === 'light') ? '🌙 暗色' : '☀️ 浅色';
+          };
+          wrap.appendChild(btn);
+          box.insertBefore(wrap, box.firstChild);
+        }
+      }
+      ensure();
+      const obs = new MutationObserver(ensure);
+      obs.observe(document.body, {childList: true, subtree: true});
+    })();
+    </script>
+    """
+    _components_html(_theme_toggle, height=0, scrolling=False)
 
 
 _inject_css()
@@ -220,9 +342,10 @@ for _k, _v in _DEFAULTS.items():
 
 # ── 进度里程碑常量（消除魔法数字）──
 _PROGRESS_MAP = {
+    "download_start": 0.05,       # 下载阶段起点锚
     "transcribe_start": 0.18,
     "transcribe_done": 0.28,
-    "research_write_start": 0.58,
+    "images_start": 0.58,         # 配图阶段起点锚（原 research_write_start，命名纠正）
     "images_skipped": 0.65,
     "images_cover_done": 0.62,
     "images_all_done": 0.67,
@@ -359,7 +482,7 @@ class PipelineState:
         run_id: str = "",
         input_url: str = "",
         content_type: str = "toutie",
-        content_style: str = "story_narrative",
+        content_style: str = "baoming_shuo",
         enable_humanize: bool = False,
         with_images: bool = False,
         completed_stages: Optional[List[str]] = None,
@@ -664,7 +787,11 @@ def _download_via_ytdlp(state: PipelineState, temp_dir: Path) -> Optional[Dict[s
                 p = float(pct) / 100
             except ValueError:
                 p = 0
-            st.session_state.progress_pct = 0.05 + p * 0.10
+            # 下载进度区间：download_start → transcribe_start（基于常量跨度，消除魔法数字）
+            st.session_state.progress_pct = (
+                _PROGRESS_MAP["download_start"]
+                + p * (_PROGRESS_MAP["transcribe_start"] - _PROGRESS_MAP["download_start"])
+            )
 
     ydl_opts = {
         "outtmpl": str(temp_dir / "%(id)s.%(ext)s"),
@@ -1138,7 +1265,7 @@ def step_images(state: PipelineState) -> bool:
 
     images_dir = state.run_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-    st.session_state.progress_pct = _PROGRESS_MAP["research_write_start"]
+    st.session_state.progress_pct = _PROGRESS_MAP["images_start"]
 
     cover_path = None
     inline_paths = []
@@ -1417,6 +1544,8 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
         _sys.stderr.write(f"[pipeline] 流水线结束, all_done={all(state.is_done(s[0]) for s in stages)}\n"); _sys.stderr.flush()
 
     except Exception as e:
+        # 业务级异常兜底：单个阶段异常已在 execute_pipeline 内部 try/except 捕获并 break；
+        # 此处仅兜底未预料的顶层异常（分层：阶段内异常 → 顶层致命异常）。
         _sys.stderr.write(f"[pipeline] 错误: {e}\n"); _sys.stderr.flush()
         add_log(f"流水线发生错误: {e}", "error")
         traceback.print_exc()
@@ -1469,13 +1598,10 @@ def render_sidebar():
         style = st.selectbox(
             "内容风格",
             options=[
-                ("story_narrative", "📖 评书故事型（听风的蚕）"),
-                ("military", "🔥 军事深度分析型"),
-                ("sharp_commentary", "✒️ 冷静克制型（牛弹琴）"),
-                ("data_list", "📊 硬核论证型（静思有我）"),
-                ("flash_news", "⚡ 快讯速报型"),
-                ("discussion", "💬 互动讨论型"),
-                ("general", "📝 通用风格"),
+                ("baoming_shuo", "🔥 包明说（反差悬念型）"),
+                ("jin_shuo", "📚 晋说（乡愁叙事型）"),
+                ("global_archive", "🏛️ 全球档案馆（馆长悬疑型）"),
+                ("story_narrative", "📖 听风的蚕（评书故事型）"),
             ],
             format_func=lambda x: x[1],
             key="sidebar_style",
@@ -1582,11 +1708,10 @@ def render_main():
     is_running = st.session_state.is_running
     has_result = st.session_state.result_data is not None
 
-    status_color = "var(--warning)" if is_running else ("var(--success)" if has_result else "var(--text-muted)")
+    status_state = "running" if is_running else ("done" if has_result else "ready")
     status_text = "● 运行中" if is_running else ("● 已完成" if has_result else "● 就绪")
     st.markdown(
-        f'<div style="text-align:center;margin-bottom:16px;"><span style="color:{status_color};font-size:14px;">'
-        f'{status_text}</span></div>',
+        f'<div style="text-align:center;"><span class="status-pill {status_state}">{status_text}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -1634,26 +1759,30 @@ def render_main():
 # UI 进度条 + 阶段指示灯
 # ============================================================
 def render_progress():
-    """渲染阶段进度条和指示灯。"""
+    """渲染阶段进度条和阶段流程指示灯（灯 + 连接线）。"""
     stages_order = ["下载", "转录", "研究写作", "配图", "组装"]
 
-    # 阶段指示灯行
-    cols = st.columns(len(stages_order))
-    for i, name in enumerate(stages_order):
-        status = st.session_state.stage_status.get(name, "pending")
-        with cols[i]:
-            emoji_map = {"done": "✅", "running": "⏳", "failed": "❌", "pending": "⬜"}
-            status_emoji = emoji_map.get(status, "⬜")
-            indicator_html = f"""
-            <div style="text-align:center;">
-                <div class="stage-indicator {status}" style="display:inline-block;"></div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">{status_emoji} {name}</div>
-            </div>
-            """
-            st.markdown(indicator_html, unsafe_allow_html=True)
+    # 阶段状态 → 文字标签（色盲友好：除颜色外提供文字状态）
+    status_label = {"done": "完成", "running": "进行中", "failed": "失败", "pending": "待开始"}
 
-    # 进度条
+    # 阶段流程：灯 + 连接线（替代堆叠的 5 列指示灯，信息更对齐）
+    steps_html = ['<div class="stage-flow">']
+    for name in stages_order:
+        status = st.session_state.stage_status.get(name, "pending")
+        s_text = status_label.get(status, "待开始")
+        steps_html.append(
+            f'<div class="stage-step {status}">'
+            f'<span class="dot"></span>'
+            f'<div class="label">{name}</div>'
+            f'<div class="state">{s_text}</div>'
+            f'</div>'
+        )
+    steps_html.append('</div>')
+    st.markdown("\n".join(steps_html), unsafe_allow_html=True)
+
+    # 进度条 + 精确百分比（交互反馈增强）
     st.progress(st.session_state.progress_pct)
+    st.caption(f"🔢 进度 {int(st.session_state.progress_pct * 100)}%")
 
     # 当前阶段描述
     if st.session_state.is_running:
@@ -1878,6 +2007,8 @@ def main():
                     try:
                         execute_pipeline(processed, style, humanize, with_images, content_type)
                     except BaseException as e:
+                        # 必须捕获 BaseException：兜底线程级致命错误（含 KeyboardInterrupt），
+                        # 并确保无论成功/失败/中断都释放 _PIPELINE_LOCK，防止锁泄漏导致后续无法启动。
                         if not st.session_state.pipeline_error:
                             st.session_state.pipeline_error = f"致命错误({type(e).__name__}): {e}"
                     finally:
