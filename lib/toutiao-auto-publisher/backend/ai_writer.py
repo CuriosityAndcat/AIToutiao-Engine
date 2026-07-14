@@ -46,10 +46,32 @@ from prompts import (
     MILITARY_RED_LINES,
     HUMANIZE_SYSTEM_PROMPT,
     HUMANIZE_USER_PROMPT,
+    GLOBAL_ARCHIVE_HUMANIZE_SYSTEM_PROMPT,
+    GLOBAL_ARCHIVE_HUMANIZE_USER_PROMPT,
     ARTICLE_PROMPT,
     COVER_KEYWORD_PROMPT,
 )
 
+
+# ============================================================
+# 全局事实边界（系统级注入，优先级高于风格指令）
+# 防止 LLM 为满足风格要求而编造具体日期/人名/数据。
+# 注入位置：generate_toutie / generate_article 的 system_prompt 前缀。
+# 注意：Claim-Pipeline 模式跳过此注入（声明池约束更强）。
+# ============================================================
+
+_FACT_BOUNDARY_SYSTEM = (
+    "【最高优先级：事实边界 — 违反将导致内容不合格】\n"
+    "1. 你只能使用用户消息中提供的「信息来源」和「网络背景资料」中的事实写作\n"
+    "2. 严禁编造：具体日期（如\"5月8日\"）、人名、地名、协议名称、精确数字\n"
+    "   → 如果来源中只有概括描述，请保持概括，不要自行补细节\n"
+    "3. 信息来源中不存在的细节 → 不要写；不确定的信息 → 用\"据报道\"\"据分析\"标记\n"
+    "4. 信息不足以支撑详细论述时，用分析性/推理性语言替代\n"
+    "   （如\"这可能意味着…\"\"不排除…的可能性\"\"值得关注的是…\"）\n"
+    "5. 时间表述：来源中的未来计划（如\"计划在2026年部署\"）不要写成已发生事件\n"
+    "6. 以上规则优先于任何风格要求。风格指令中如有数据要求但来源无具体数据，\n"
+    "   则用分析性/推理性语言替代，而非编造数字\n"
+)
 
 # ============================================================
 # 风格路由字典
@@ -127,6 +149,12 @@ class AIWriter:
             STYLE_ROUTER[ContentStyle.GENERAL],  # 未知风格回退到通用
         )
 
+        # 系统级事实边界：放在风格 system_prompt 之前，优先级最高
+        if system_prompt:
+            system_prompt = _FACT_BOUNDARY_SYSTEM + "\n\n" + system_prompt
+        else:
+            system_prompt = _FACT_BOUNDARY_SYSTEM
+
         # 格式化 User Prompt
         user_prompt = user_template.format(topic=topic, max_chars=max_chars)
 
@@ -138,10 +166,113 @@ class AIWriter:
             temperature=temperature,
         )
 
+        # 解析标题：各风格 toutie prompt 已统一要求输出「标题：xxx」格式
+        # （对齐 generate_article 的解析逻辑，根治微头条内容缺失标题的问题）
+        title = ""
+        body = content
+        if "标题：" in content:
+            _parts = content.split("标题：", 1)
+            if len(_parts) > 1:
+                _after = _parts[1]
+                _end = _after.find("\n")
+                if _end != -1:
+                    title = _after[:_end].strip()
+                    body = _after[_end:].strip()
+                else:
+                    title = _after.strip()
+                    body = _after.strip()
+
         return {
-            "title": "",
-            "content": content,
-            "char_count": len(content),
+            "title": title,
+            "content": body,
+            "char_count": len(body),
+        }
+
+    def compose_from_claims(
+        self,
+        claims_pool,  # ClaimsPool (from fact_pipeline)
+        style,        # ContentStyle
+        transcript: str,
+        max_chars: int = 1200,
+    ) -> dict:
+        """阶段 3 Compose：从已验证声明池 + 风格路由生成微头条正文。
+
+        关键差异 vs generate_toutie()：
+        - **跳过 _FACT_BOUNDARY_SYSTEM 注入**（声明池本身是更强的约束，
+          叠加会造成指令冗余/潜在措辞冲突）
+        - 输入是结构化声明池而非自由文本 topic
+        - 区分「确定事实」和「部分事实」，后者自动带不确定性标记
+
+        Args:
+            claims_pool: 阶段 2.5 合并后的 ClaimsPool
+            style: 内容风格（枚举值或字符串）
+            transcript: 视频转录摘要
+            max_chars: 最大字数
+
+        Returns:
+            dict: {"title": str, "content": str, "char_count": int}
+        """
+        # 风格路由
+        if isinstance(style, str):
+            try:
+                style = ContentStyle(style)
+            except ValueError:
+                style = ContentStyle.BAOMING_SHUO
+
+        system_prompt, user_template, temperature = STYLE_ROUTER.get(
+            style,
+            STYLE_ROUTER[ContentStyle.GENERAL],
+        )
+
+        # 构建 Compose prompt（区分确定/部分事实）
+        claims_text = claims_pool.to_prompt_text()
+        compose_prompt = (
+            f"{claims_text}\n\n"
+            f"【写作要求】\n"
+            f"基于以上事实，按指定风格写一篇微头条。\n"
+            f"- 可以调整语言风格、句式、结构\n"
+            f"- 「确定事实」可直接引用；「部分事实」必须带不确定性标记\n"
+            f"- 不能新增以下信息：具体日期（日/月）、具体人名（非公众人物）、"
+            f"具体数字（人数/金额等）\n"
+            f"  → 除非在「确定事实」中有明确记录\n"
+            f"- 如果事实不足以支撑丰富内容，用分析性/推理性语言填充\n\n"
+            f"【视频摘要】\n{transcript[:2000]}\n\n"
+            f"【输出】\n标题: ...\n正文: ..."
+        )
+
+        # 用风格 user_template 格式包装
+        user_prompt = compose_prompt
+        if "{topic}" in user_template:
+            user_prompt = user_template.format(
+                topic=compose_prompt, max_chars=max_chars,
+            )
+
+        content = self._call_ai(
+            prompt=user_prompt,
+            system_prompt=system_prompt,  # 跳过 _FACT_BOUNDARY_SYSTEM
+            max_tokens=max_chars * 2,
+            temperature=temperature,
+        )
+
+        # 解析标题
+        title = ""
+        body = content
+        if "标题：" in content:
+            _parts = content.split("标题：", 1)
+            if len(_parts) > 1:
+                _after = _parts[1]
+                _end = _after.find("\n")
+                if _end != -1:
+                    title = _after[:_end].strip()
+                    body = _after[_end:].strip()
+                else:
+                    title = _after.strip()
+                    body = _after.strip()
+
+        return {
+            "title": title,
+            "content": body,
+            "char_count": len(body),
         }
 
     def generate_article(
@@ -152,7 +283,7 @@ class AIWriter:
     ) -> dict:
         """生成文章内容"""
         prompt = ARTICLE_PROMPT.format(topic=topic, max_chars=max_chars, tone=tone)
-        result = self._call_ai(prompt, max_tokens=max_chars * 2)
+        result = self._call_ai(prompt, system_prompt=_FACT_BOUNDARY_SYSTEM, max_tokens=max_chars * 2)
 
         # 解析标题和正文
         title = ""
@@ -206,25 +337,56 @@ class AIWriter:
             tone = kwargs.get("tone", "专业且易懂")
             return self.generate_article(topic, max_chars, tone)
 
-    def humanize(self, text: str) -> dict:
+    # ═══════════════════════════════════════════════════════════
+    # Humanize 风格路由表
+    # ═══════════════════════════════════════════════════════════
+    _HUMANIZE_ROUTER = {
+        ContentStyle.GLOBAL_ARCHIVE: (
+            GLOBAL_ARCHIVE_HUMANIZE_SYSTEM_PROMPT,
+            GLOBAL_ARCHIVE_HUMANIZE_USER_PROMPT,
+            0.75,  # 馆长风格温度略低，保持专业稳定
+        ),
+    }
+
+    def humanize(self, text: str, content_style=None) -> dict:
         """
         人工化改写：去除 AI 味，变成真人手笔。
 
         用于对 AI 生成内容进行二次处理，消除机器腔，注入口语化表达、
         节奏不规则性、个人态度等真人写作特征，同时确保符合今日头条平台规则。
 
+        风格感知：传入 content_style 可触发风格专属 Humanize 提示词，
+        避免通用 Humanize 破坏特定风格的独特性（如全球档案馆的馆长口吻）。
+
         Args:
             text: 待改写的原始文本（AI 生成或初稿）
+            content_style: 可选，内容风格（ContentStyle 枚举或字符串）
 
         Returns:
             dict: {"content": 改写后的微头条正文, "char_count": 字数}
         """
-        user_prompt = HUMANIZE_USER_PROMPT.format(text=text)
+        # 风格路由：有专属 humanize 则用专属，否则走通用
+        system_prompt = HUMANIZE_SYSTEM_PROMPT
+        user_template = HUMANIZE_USER_PROMPT
+        temperature = 0.8
+
+        if content_style is not None:
+            if isinstance(content_style, str):
+                try:
+                    content_style = ContentStyle(content_style)
+                except ValueError:
+                    content_style = None
+            if content_style is not None:
+                route = self._HUMANIZE_ROUTER.get(content_style)
+                if route:
+                    system_prompt, user_template, temperature = route
+
+        user_prompt = user_template.format(text=text)
         content = self._call_ai(
             prompt=user_prompt,
-            system_prompt=HUMANIZE_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             max_tokens=len(text) * 2,
-            temperature=0.8,  # 高温度增加人类写作的随机性
+            temperature=temperature,
         )
         return {
             "content": content,

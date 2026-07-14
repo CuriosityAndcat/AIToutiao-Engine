@@ -1,0 +1,64 @@
+{
+  "title_hook": {
+    "type": "悬念+数字",
+    "pattern": "展开_七分钟带你了解“听风的蚕”",
+    "emotion_words": [
+      "了解"
+    ]
+  },
+  "opening": {
+    "narrative_technique": "无唤醒词，直接进入视频播放界面，无冲突抛设，以平台界面描述为主",
+    "evidence": "关注 推荐 上海 视频 财经 科技 热点 国际 更多 搜索 消息 发布 登录 展开 七分钟带你了解“听风的蚕”"
+  },
+  "narrative_structure": {
+    "structure": "无明确叙事结构，内容为视频播放页面的推荐列表和界面元素",
+    "paragraph_function": "无段落功能，仅展示推荐视频标题和播放量"
+  },
+  "paragraph_rhythm": {
+    "average_paragraph_words": 10,
+    "long_short_ratio": "短句为主，长句极少",
+    "break_style": "以换行分隔单个推荐条目"
+  },
+  "golden_sentences": [
+    {
+      "template": "无标志性句式",
+      "evidence": "无"
+    }
+  ],
+  "person_usage": {
+    "person": "无明确人称",
+    "reader_address": "无",
+    "author_self_reference": "无"
+  },
+  "emotion_curve": {
+    "curve": "无情绪曲线，内容为中性推荐列表",
+    "evidence": "无"
+  },
+  "evidence_density": {
+    "per_1000_words": 0,
+    "evidence": "无具体数据/人名/地名/武器型号/时间点"
+  },
+  "interaction_design": {
+    "design": "无互动设计",
+    "template": "无"
+  },
+  "humanize_score": {
+    "score": 10,
+    "reason": "内容为平台自动生成的推荐列表，无口语化、无个性化用词、机器腔明显"
+  },
+  "style_keywords": [
+    "无风格",
+    "平台界面",
+    "推荐列表",
+    "中性",
+    "无叙事",
+    "无情感"
+  ],
+  "one_line_summary": "该内容非典型自媒体文章，而是视频播放页面的推荐列表，无作者写作风格可言。",
+  "_meta": {
+    "author": "听风的蚕",
+    "title": "展开_七分钟带你了解“听风的蚕”",
+    "source_file": "d:\\AIToutiao-Engine\\docs\\采集\\听风的蚕\\听风的蚕_展开_七分钟带你了解“听风的蚕”.md",
+    "content_len": 855
+  }
+}

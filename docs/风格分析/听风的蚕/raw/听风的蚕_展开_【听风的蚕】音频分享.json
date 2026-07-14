@@ -1,0 +1,79 @@
+{
+  "title_hook": {
+    "type": "悬念",
+    "features": "标题使用'展开'和'音频分享'制造未完成感，引发好奇",
+    "emotion_words": "无明确情绪词，但'展开'暗示内容待揭示"
+  },
+  "opening": {
+    "narrative_technique": "无直接唤醒词，以平台界面元素（关注、推荐等）堆叠开场，未抛冲突，更像导航引导",
+    "evidence": "开头为'关注 推荐 上海 视频 财经 科技 热点 国际 更多 搜索 消息 发布 登录'"
+  },
+  "narrative_structure": {
+    "structure_type": "碎片化列表",
+    "paragraph_function": "每个段落为独立视频推荐条目，无递进或论证，功能是信息陈列"
+  },
+  "paragraph_rhythm": {
+    "avg_words_per_paragraph": "约15-30字",
+    "long_short_ratio": "短句为主，长句极少",
+    "break_style": "频繁换行，每行一个推荐条目"
+  },
+  "golden_sentences": [
+    {
+      "template": "不是…而是…",
+      "evidence": "未出现"
+    },
+    {
+      "template": "最X的是",
+      "evidence": "未出现"
+    },
+    {
+      "template": "家人们/兄弟们",
+      "evidence": "未出现"
+    },
+    {
+      "template": "你永远不知道…",
+      "evidence": "未出现"
+    },
+    {
+      "template": "真相是…",
+      "evidence": "未出现"
+    }
+  ],
+  "person_usage": {
+    "person": "第三人称",
+    "reader_address": "无直接称呼",
+    "author_self_reference": "无作者自我指代"
+  },
+  "emotion_curve": {
+    "curve": "中性→中性→中性",
+    "description": "全文为推荐列表，无情绪起伏"
+  },
+  "evidence_density": {
+    "density_per_1000_words": "约0-2个（仅视频标题中的关键词如'王立群''意大利'等）",
+    "details": "无具体数据、人名、地名、武器型号、时间点"
+  },
+  "interaction_design": {
+    "design": "无提问式结尾或CTA，底部有'正在获取更多内容'暗示持续加载",
+    "template": "无"
+  },
+  "humanize_score": {
+    "score": 10,
+    "reason": "全文为机器生成的推荐列表，无口语化表达、个性化用词，高度机器腔"
+  },
+  "style_keywords": [
+    "碎片化",
+    "列表式",
+    "无叙事",
+    "平台界面",
+    "信息堆砌",
+    "中性语调",
+    "低互动"
+  ],
+  "one_line_summary": "该文是典型的平台推荐流界面复制，无作者风格，纯信息陈列，缺乏叙事和情感",
+  "_meta": {
+    "author": "听风的蚕",
+    "title": "展开_【听风的蚕】音频分享",
+    "source_file": "d:\\AIToutiao-Engine\\docs\\采集\\听风的蚕\\听风的蚕_展开_【听风的蚕】音频分享.md",
+    "content_len": 806
+  }
+}

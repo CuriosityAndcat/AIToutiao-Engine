@@ -122,6 +122,12 @@ class WorkingMemory:
     search_context: str = ""
     """搜索增强获取的上下文。"""
 
+    unverified_claims: list[str] = field(default_factory=list)
+    """未验证声明 ID 列表（Claim-Pipeline 模式专用）。"""
+
+    knowledge_gaps: list[str] = field(default_factory=list)
+    """事实缺口方向（Claim-Pipeline 模式专用，指导下一轮搜索）。"""
+
     def to_prompt(self) -> str:
         """将工作记忆格式化为可注入 Prompt 的文本"""
         parts: list[str] = []
@@ -141,6 +147,18 @@ class WorkingMemory:
             for i, r in enumerate(recent, 1):
                 parts.append(f"  第 {i} 轮: {r}")
 
+        # Claim-Pipeline 模式：声明级反思
+        if self.unverified_claims:
+            parts.append(
+                f"## 未验证声明\n  上一轮有 {len(self.unverified_claims)} 条声明"
+                f"无法在来源中找到依据: {', '.join(self.unverified_claims[:5])}"
+            )
+        if self.knowledge_gaps:
+            parts.append(
+                f"## 事实缺口\n  需要补充搜索的方向:"
+                f" {', '.join(self.knowledge_gaps[:3])}"
+            )
+
         parts.append(f"## 进度\n  迭代: {self.iterations}/{self.max_iterations}")
 
         return "\n\n".join(parts)
@@ -157,6 +175,8 @@ class WorkingMemory:
         self.iterations = 0
         self.status = ""
         self.search_context = ""
+        self.unverified_claims.clear()
+        self.knowledge_gaps.clear()
 
     def __repr__(self) -> str:
         return (

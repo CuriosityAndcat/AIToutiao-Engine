@@ -1,0 +1,47 @@
+{
+  "title_hook": "悬念+反差",
+  "title_hook_evidence": "从自己揍自己到宣传片翻车，印军那些离谱的操作",
+  "opening": "无唤醒词，直接抛冲突",
+  "opening_evidence": "展开_从自己揍自己到宣传片翻车，印军那些离谱的操作",
+  "narrative_structure": "设问-论证-收束",
+  "narrative_structure_evidence": "从自己揍自己到宣传片翻车，印军那些离谱的操作",
+  "paragraph_rhythm": "平均段落字数约50字，长短句比例1:3，断句风格短促",
+  "paragraph_rhythm_evidence": "展开_从自己揍自己到宣传片翻车，印军那些离谱的操作",
+  "golden_sentences": [
+    "不是…而是…",
+    "最X的是",
+    "从…到…",
+    "那些…的操作"
+  ],
+  "golden_sentences_evidence": [
+    "从自己揍自己到宣传片翻车",
+    "印军那些离谱的操作"
+  ],
+  "person_usage": "第三人称，对读者称呼无，作者自我指代无",
+  "person_usage_evidence": "印军那些离谱的操作",
+  "emotion_curve": "震惊→紧张→愤怒→升华",
+  "emotion_curve_evidence": "从自己揍自己到宣传片翻车，印军那些离谱的操作",
+  "evidence_density": "每千字约5个证据",
+  "evidence_density_evidence": "自己揍自己、宣传片翻车、印军",
+  "interaction_design": "无互动设计",
+  "interaction_design_evidence": "无提问式结尾、CTA、标签",
+  "humanize_score": 60,
+  "humanize_score_evidence": "口语化占比低，个性化用词少，机器腔中等",
+  "style_keywords": [
+    "悬念",
+    "反差",
+    "短句",
+    "设问",
+    "证据",
+    "情绪",
+    "第三人称",
+    "军事"
+  ],
+  "one_line_summary": "以悬念和反差为钩子，短句节奏，设问结构，情绪起伏，证据密度适中，无互动，去AI味中等。",
+  "_meta": {
+    "author": "晋说",
+    "title": "展开_从自己揍自己到宣传片翻车，印军那些离谱的操作",
+    "source_file": "d:\\AIToutiao-Engine\\docs\\采集\\晋说\\晋说_展开_从自己揍自己到宣传片翻车，印军那些离谱的操作.md",
+    "content_len": 898
+  }
+}

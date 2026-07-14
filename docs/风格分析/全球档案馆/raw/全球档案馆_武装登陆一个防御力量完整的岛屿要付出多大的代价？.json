@@ -1,0 +1,64 @@
+{
+  "title_hook": {
+    "type": "提问",
+    "features": "以问句制造悬念，引发读者思考代价",
+    "emotion_words": "代价"
+  },
+  "opening": {
+    "narrative_technique": "直接抛冲突，用「战云密布」营造紧张氛围，无唤醒词",
+    "evidence": "「战云密布」「紫方的北方舰队和太平洋舰队在蓝方北部展开了作战队形，确迟迟未动」"
+  },
+  "narrative_structure": {
+    "type": "设问-论证-收束",
+    "paragraph_function": "开篇设问引出冲突，中段多线叙事（紫方、红方、西盟等），结尾聚焦登陆战"
+  },
+  "paragraph_rhythm": {
+    "avg_words": 80,
+    "long_short_ratio": "长句为主，短句用于强调",
+    "style": "多用逗号连接，断句密集"
+  },
+  "golden_sentences": [
+    "「不是…而是…」：『不是我们占领和登陆蓝方领土，只会打击和清除他们的军事设施』",
+    "「最X的是」：『最糟糕的还在后面』",
+    "「不是…而是…」：『不是直接动手更加瘆人心魄』",
+    "「很红，很暴力」：『很红，很暴力！』",
+    "「不是…而是…」：『不是怕蓝方舰队没死透，补枪去了』"
+  ],
+  "person_usage": {
+    "person": "第三人称",
+    "reader_address": "无直接称呼",
+    "author_self_ref": "无"
+  },
+  "emotion_curve": {
+    "curve": "紧张→震惊→悲壮→压抑",
+    "evidence": "开篇「战云密布」紧张，中段「降维打击」震惊，蓝方官兵「必死无疑」悲壮，结尾「血幕」压抑"
+  },
+  "evidence_density": {
+    "per_1000_words": 15,
+    "examples": "「055」「052D」「伊丽莎白女王号」「戴高乐航母」「3M14巡航导弹」「苏-57」等"
+  },
+  "interaction_design": {
+    "type": "无提问式结尾，无CTA，无标签",
+    "template": "无"
+  },
+  "humanize_score": {
+    "score": 70,
+    "basis": "口语化占比中等，如「很红，很暴力」「莫西莫西」，但部分段落较正式，有机器腔"
+  },
+  "style_keywords": [
+    "军事推演",
+    "多线叙事",
+    "技术细节",
+    "情绪渲染",
+    "悬念设置",
+    "宏大场景",
+    "悲壮色彩"
+  ],
+  "one_line_summary": "以设问开篇，通过多国博弈和军事细节推演，营造紧张悲壮的战争叙事风格。",
+  "_meta": {
+    "author": "全球档案馆",
+    "title": "武装登陆一个防御力量完整的岛屿要付出多大的代价？",
+    "source_file": "d:\\AIToutiao-Engine\\docs\\采集\\全球档案馆\\全球档案馆_武装登陆一个防御力量完整的岛屿要付出多大的代价？.md",
+    "content_len": 15776
+  }
+}

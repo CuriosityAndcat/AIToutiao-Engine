@@ -1,0 +1,67 @@
+{
+  "title_hook": {
+    "type": "反差+震惊",
+    "pattern": "主语+动作+对象（盟友）",
+    "emotion_words": [
+      "磨刀霍霍"
+    ]
+  },
+  "opening": {
+    "narrative_technique": "比喻开篇+历史对比",
+    "evidence": "格陵兰岛就像一面镜子，照出了美国贪婪的面目，脊背发凉的欧洲没有料到自己也会有今天。"
+  },
+  "narrative_structure": {
+    "type": "设问-论证-收束",
+    "paragraph_function": "开篇设喻引出冲突，中段列举事实论证，结尾升华总结"
+  },
+  "paragraph_rhythm": {
+    "avg_words": 120,
+    "long_short_ratio": "长句占60%，短句占40%",
+    "break_style": "多用逗号、分号，偶用感叹号断句"
+  },
+  "golden_sentences": [
+    "不是…而是…：不是天上掉馅饼，而是中国实力博弈的结果",
+    "最X的是：最完整工业产业链和超大规模消费市场",
+    "得道多助失道寡助：印证了中国那句话——得道多助失道寡助",
+    "如果…就…：如果我们不在谈判桌上，就会出现在菜单上",
+    "国运来了挡都挡不住：国运来了挡都挡不住"
+  ],
+  "person_usage": {
+    "person": "第三人称为主，偶用第一人称复数",
+    "reader_address": "家人们/各位（文中未直接出现，但风格隐含）",
+    "author_self_reference": "听风的蚕"
+  },
+  "emotion_curve": {
+    "curve": "震惊→愤怒→讽刺→振奋",
+    "evidence": "开篇震惊（脊背发凉）→中段愤怒（无耻、獠牙）→讽刺（dog咬dog）→结尾振奋（国运来了挡都挡不住）"
+  },
+  "evidence_density": {
+    "density": "每千字约15-20个",
+    "examples": "格陵兰岛、WTO、五眼联盟、加拿大总理卡尼、特朗普、法国总统马克龙、德国总理默茨、芬兰总理、西班牙、韩国、人民币、北极"
+  },
+  "interaction_design": {
+    "type": "提问式结尾+CTA",
+    "template": "感谢大家的喜欢和赞赏！创作不易，期待大家的点赞、转发！"
+  },
+  "humanize_score": {
+    "score": 85,
+    "reason": "口语化占比高（如‘说白了’‘dog咬dog’‘国运来了’），个性化用词（‘磨刀霍霍’‘回旋镖’‘獠牙’），机器腔程度低"
+  },
+  "style_keywords": [
+    "比喻开篇",
+    "历史对比",
+    "讽刺幽默",
+    "数据密集",
+    "情绪递进",
+    "互动结尾",
+    "口语化",
+    "爱国叙事"
+  ],
+  "one_line_summary": "以比喻和讽刺手法，用密集事实和情绪递进，将国际博弈转化为通俗易懂的爱国叙事，结尾互动强化粉丝粘性。",
+  "_meta": {
+    "author": "听风的蚕",
+    "title": "美国磨刀霍霍向盟友",
+    "source_file": "d:\\AIToutiao-Engine\\docs\\采集\\听风的蚕\\听风的蚕_美国磨刀霍霍向盟友.md",
+    "content_len": 4062
+  }
+}

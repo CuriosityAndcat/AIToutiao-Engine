@@ -1,0 +1,31 @@
+TOKEN tinybird_read_public READ
+TOKEN tinybird_read READ
+
+DESCRIPTION >
+Model health statistics, grouped by model and event type.
+Returns request counts, 4xx/5xx error counts, and response times for monitoring dashboards.
+Time window is controlled by the `minutes` parameter (default 60).
+
+NODE model_health_stats
+SQL >
+    %
+    SELECT
+        resolved_model_requested as model,
+        event_type,
+        topK(1)(model_provider_used)[1] as provider,
+        topK(1)(model_used)[1] as model_used,
+        count() as total_requests,
+        countIf(response_status >= 200 AND response_status < 300) as status_2xx,
+        countIf(response_status >= 400 AND response_status < 500) as errors_4xx,
+        countIf(response_status >= 500) as errors_5xx,
+        maxIf(start_time, response_status >= 500) as last_error_at,
+        round(quantileIf(0.5)(response_time, response_status >= 200 AND response_status < 300), 0) as latency_p50_ms,
+        round(quantileIf(0.95)(response_time, response_status >= 200 AND response_status < 300), 0) as latency_p95_ms,
+        round(avgIf(response_time, response_status >= 200 AND response_status < 300), 0) as avg_latency_ms,
+        max(start_time) as last_request_at
+    FROM generation_event
+    WHERE start_time >= now() - interval {{Int32(minutes, 60)}} minute
+    GROUP BY model, event_type
+    ORDER BY total_requests DESC
+
+TYPE endpoint

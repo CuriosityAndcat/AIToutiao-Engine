@@ -10,6 +10,6 @@ echo.
 echo 正在启动 Streamlit 引擎...
 echo.
 
-streamlit run engine_app.py --server.port 8502 --server.address 0.0.0.0 < nul
+streamlit run engine_app.py --server.port 8502 --server.address 0.0.0.0 --server.fileWatcherType none < nul
 
 pause

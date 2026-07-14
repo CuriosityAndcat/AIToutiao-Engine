@@ -67,7 +67,12 @@ class Settings(BaseSettings):
     # 违规检测开关（预留）
     ENABLE_COMPLIANCE_CHECK: bool = False
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # 配图模型配置（Agnes Image 2.0 Flash）
+    AGNES_API_KEY: str = ""
+    AGNES_API_BASE: str = "https://apihub.agnes-ai.com/v1"
+    AGNES_IMAGE_MODEL: str = "agnes-image-2.0-flash"
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

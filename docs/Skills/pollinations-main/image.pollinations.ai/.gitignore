@@ -1,0 +1,18 @@
+# Binary installers
+Miniconda3-latest-Linux-x86_64.sh
+
+# Local development files
+metrics/
+processed.txt
+profiling.js
+steps.txt
+model-requests.json
+
+# Environment variables
+cloudflare-cache/.dev.vars
+
+# Cloudflare tunnel credentials
+.cloudflared/*.json
+~/.cloudflared/*.json
+
+*.sqlcredentials/

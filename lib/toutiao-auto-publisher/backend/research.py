@@ -6,15 +6,68 @@
 模块本身保持纯逻辑、可单测，不依赖 Streamlit。
 """
 import sys as _sys
+import re as _re
+
+
+def _clean_search_noise(text: str) -> str:
+    """过滤搜索结果中的 CSS/JS 代码噪声，保留自然语言内容。
+
+    搜索引擎抓取时可能混入页面代码片段，在进入 Claim-Pipeline
+    的 Extract 阶段前过滤，防止垃圾代码污染声明提取质量。
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    clean_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            clean_lines.append(line)
+            continue
+
+        # 1. 跳过纯 CSS 行（选择器 + 属性）
+        if _re.match(r'^[.#]?[\w\-]+\s*\{', stripped):
+            continue
+        if _re.match(r'^\s*(background|color|font|margin|padding|border|display|position|width|height|top|left|right|bottom|z-index|overflow|opacity|transform|transition|animation|flex|grid)\s*:', stripped, _re.IGNORECASE):
+            continue
+        if stripped in ("{", "}", "};"):
+            continue
+
+        # 2. 跳过纯 JS/代码行
+        if _re.match(r'^(function|var |let |const |if \(|for \(|while \(|return |console\.|document\.|window\.|\.addEventListener|\.querySelector)', stripped):
+            continue
+        if _re.match(r'^[a-zA-Z_$][\w$]*\s*=\s*', stripped) and ('(' in stripped or '{' in stripped):
+            continue
+
+        # 3. 跳过 HTML 注释
+        if stripped.startswith("<!--") or stripped.startswith("//") or stripped.startswith("/*"):
+            continue
+
+        # 4. 跳过 URL-only 行
+        if _re.match(r'^https?://', stripped) and len(stripped.split()) == 1:
+            continue
+
+        # 5. 跳过符号占比 > 70% 的行（非自然语言）
+        alpha_chars = sum(1 for c in stripped if c.isalpha() or '\u4e00' <= c <= '\u9fff')
+        if len(stripped) > 0 and alpha_chars / len(stripped) < 0.3:
+            continue
+
+        clean_lines.append(line)
+
+    return "\n".join(clean_lines)
 
 
 def search_web(query: str, max_results: int = 5) -> str:
     """使用百度 + 搜狗搜索，返回聚合的搜索结果摘要（纯文本）。
 
     策略：百度优先 → 搜狗 fallback → 返回空字符串。
+    自动过滤 CSS/JS 代码噪声。
     """
     from agent.search_engine import search_web as _do_search
-    return _do_search(query, max_results=max_results)
+    raw = _do_search(query, max_results=max_results)
+    return _clean_search_noise(raw)
 
 
 def extract_key_topics(state) -> str:
@@ -100,18 +153,32 @@ def build_research_context(state, log_fn=print, progress_fn=None) -> str:
 
 
 def extract_refined_query(content: str, feedback: str, state) -> str:
-    """根据上一轮评估反馈，生成精炼搜索关键词。"""
+    """根据上一轮评估反馈，生成精炼搜索关键词。
+
+    ⚠️ B-1 临时修复（B-2 Claim-Pipeline 后将被声明级搜索逻辑替代）：
+    原有逻辑直接用反馈文本搜 → 搜"俄军送奶车伪装来源"等幻觉内容 → 死循环。
+    修复：注入原始视频主题作为锚点，指示 LLM 忽略反馈中的具体编造细节，
+    改为搜索该主题的「核心事实」方向（宽泛而非具体）。
+    """
     if not feedback:
         return ""
+
+    # 提取视频标题作为搜索锚点（防止被反馈中的幻觉细节带偏）
+    video_title = ""
+    try:
+        video_title = state.outputs.get("video_title", "") or ""
+    except Exception:
+        pass
 
     try:
         from ai_writer import AIWriter
         writer = AIWriter()
         prompt = (
-            f"根据以下评估反馈和当前内容，提炼一个用于补充搜索的关键词短语（中文，10字以内）。"
-            f"直接返回关键词，不要其他文字。\n\n"
-            f"评价反馈: {feedback[:200]}\n"
-            f"当前内容摘要: {content[:300]}"
+            f"评估员指出以下内容存在事实不符: {feedback[:200]}\n"
+            f"原始视频主题: {video_title[:100]}\n"
+            f"请忽略反馈中的具体细节描述，提炼1个关于该主题"
+            f"「核心事实」的搜索词（中文，10字以内，宽泛而非具体）。"
+            f"直接返回关键词，不要其他文字。"
         )
         return writer._call_ai(prompt, max_tokens=40, temperature=0.3).strip().strip("。，,.;;\"'")
     except Exception:

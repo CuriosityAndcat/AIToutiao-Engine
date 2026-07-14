@@ -1,0 +1,1872 @@
+import { pollinationsErrorFromResponse } from "./error-response.js";
+import type {
+    AccountBalance,
+    AccountKey,
+    AccountProfile,
+    AudioBinaryResponse,
+    AudioGenerateOptions,
+    AuthorizeDeviceOptions,
+    AuthorizeOptions,
+    ChatOptions,
+    ChatResponse,
+    ChatStreamChunk,
+    CreatedKey,
+    CreateKeyOptions,
+    DailyUsageOptions,
+    DailyUsageResponse,
+    DeviceAuthorization,
+    DeviceCodeResponse,
+    DeviceTokenResponse,
+    ImageEditOptions,
+    ImageGenerateOptions,
+    ImageGenerateV1Options,
+    ImageResponse,
+    KeyInfo,
+    KeyUsageOptions,
+    Message,
+    ModelInfo,
+    PollinationsConfig,
+    RequestOptions,
+    TextGenerateOptions,
+    TranscribeOptions,
+    TranscriptionResponse,
+    TranscriptionVerboseResponse,
+    UploadOptions,
+    UploadResponse,
+    UsageOptions,
+    UsageResponse,
+    UserInfo,
+    VideoGenerateOptions,
+    VideoResponse,
+} from "./types.js";
+import { PollinationsError } from "./types.js";
+
+const DEFAULT_BASE_URL = "https://gen.pollinations.ai";
+export const AUTH_BASE_URL = "https://enter.pollinations.ai";
+const DEVICE_FLOW_CLIENT_ID = "pk_NgBAArhUeGvSRFba";
+const DEVICE_FLOW_DEFAULT_SCOPE = "generate keys usage";
+const DEFAULT_MAX_RETRIES = 3;
+const MAX_INT32 = 2147483647;
+// Default timeouts in milliseconds
+const DEFAULT_TIMEOUT = 300_000; // 5min for text/chat
+const DEFAULT_IMAGE_TIMEOUT = 600_000; // 10min for images
+const DEFAULT_VIDEO_TIMEOUT = 600_000; // 10min for videos
+
+// HTTP status codes that should NOT be retried
+const NON_RETRIABLE_CODES = [400, 401, 402, 403, 404, 422];
+
+// Helper to get env var (works in Node.js, Deno, Bun, and edge runtimes)
+function getEnvVar(name: string): string | undefined {
+    try {
+        const g = globalThis as Record<string, unknown>;
+        if (g.process && typeof g.process === "object") {
+            const proc = g.process as {
+                env?: Record<string, string | undefined>;
+            };
+            if (proc.env) return proc.env[name];
+        }
+        if (g.Deno && typeof g.Deno === "object") {
+            const deno = g.Deno as {
+                env?: { get?: (k: string) => string | undefined };
+            };
+            if (deno.env?.get) return deno.env.get(name);
+        }
+    } catch {
+        return undefined;
+    }
+    return undefined;
+}
+
+// Generate a random seed (0 to MAX_INT32)
+function randomSeed(): number {
+    return Math.floor(Math.random() * MAX_INT32);
+}
+
+// Resolve seed: if -1, generate random; otherwise use as-is
+function resolveSeed(seed: number | undefined): number | undefined {
+    if (seed === -1) {
+        return randomSeed();
+    }
+    return seed;
+}
+
+// Sleep helper for retry delays
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Exponential backoff delay: 1s, 2s, 4s
+function getRetryDelay(attempt: number, retryAfterSeconds?: number): number {
+    if (retryAfterSeconds !== undefined && retryAfterSeconds > 0) {
+        return retryAfterSeconds * 1000;
+    }
+    return 2 ** attempt * 1000;
+}
+
+// Check if an error should be retried
+function isRetriableError(error: unknown): boolean {
+    if (error instanceof PollinationsError) {
+        // Don't retry client errors (4xx except rate limits)
+        return !NON_RETRIABLE_CODES.includes(error.status);
+    }
+    // Network errors, timeouts, etc. are retriable
+    return true;
+}
+
+// Fetch with timeout using AbortController
+// Supports both internal timeout and external signal for cancellation
+async function fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    timeoutMs: number,
+    externalSignal?: AbortSignal,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    // If an external signal is provided, abort our controller when it aborts
+    const abortHandler = externalSignal ? () => controller.abort() : undefined;
+    if (externalSignal && abortHandler) {
+        externalSignal.addEventListener("abort", abortHandler);
+    }
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+        return response;
+    } catch (err) {
+        // Check if it was cancelled by external signal
+        if (externalSignal?.aborted) {
+            throw new PollinationsError(
+                "Request was cancelled",
+                "CANCELLED",
+                499, // Client Closed Request
+            );
+        }
+        if ((err as Error).name === "AbortError") {
+            throw new PollinationsError(
+                `Request timed out after ${timeoutMs}ms`,
+                "TIMEOUT",
+                408,
+            );
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeoutId);
+        if (externalSignal && abortHandler) {
+            externalSignal.removeEventListener("abort", abortHandler);
+        }
+    }
+}
+
+// Strip API key from URL for safe sharing
+function stripKeyFromUrl(url: string): string {
+    const urlObj = new URL(url);
+    urlObj.searchParams.delete("key");
+    return urlObj.toString();
+}
+
+// SSE parsing result
+interface SSEParseResult<T> {
+    chunks: T[];
+    remainingBuffer: string;
+}
+
+// Parse SSE lines from buffer and extract data
+function parseSSEBuffer<T>(
+    buffer: string,
+    parseChunk: (data: string) => T | null,
+): SSEParseResult<T> {
+    const lines = buffer.split("\n");
+    const remainingBuffer = lines.pop() || "";
+    const chunks: T[] = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "data: [DONE]") continue;
+        if (trimmed.startsWith("data: ")) {
+            try {
+                const parsed = parseChunk(trimmed.slice(6));
+                if (parsed !== null) {
+                    chunks.push(parsed);
+                }
+            } catch {
+                // Skip invalid JSON
+            }
+        }
+    }
+
+    return { chunks, remainingBuffer };
+}
+
+/**
+ * Pollinations AI Client
+ *
+ * A comprehensive client for interacting with the Pollinations AI API.
+ * Supports image, video, text, and audio generation.
+ *
+ * @example Basic usage
+ * ```ts
+ * const client = new Pollinations({ apiKey: 'your_api_key' });
+ * const { buffer } = await client.image('A cute robot');
+ * ```
+ *
+ * @example With environment variable (auto-detected)
+ * ```ts
+ * // Set POLLINATIONS_API_KEY in your environment
+ * const client = new Pollinations();
+ * ```
+ */
+export class Pollinations {
+    private apiKey: string;
+    private baseUrl: string;
+    private maxRetries: number;
+    private textTimeout: number;
+    private imageTimeout: number;
+    private videoTimeout: number;
+
+    constructor(config: PollinationsConfig = {}) {
+        // Auto-detect API key from environment if not provided
+        const apiKey = config.apiKey || getEnvVar("POLLINATIONS_API_KEY");
+
+        if (!apiKey) {
+            throw new PollinationsError(
+                "API key is required. Get one for free at https://enter.pollinations.ai",
+                "API_KEY",
+                401,
+            );
+        }
+
+        this.apiKey = apiKey;
+        this.baseUrl = config.baseUrl?.replace(/\/$/, "") || DEFAULT_BASE_URL;
+        this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+
+        // Allow timeout to be a default fallback for all types
+        const defaultTimeout = config.timeout ?? DEFAULT_TIMEOUT;
+        this.textTimeout = config.textTimeout ?? defaultTimeout;
+        this.imageTimeout =
+            config.imageTimeout ??
+            (config.timeout ? config.timeout : DEFAULT_IMAGE_TIMEOUT);
+        this.videoTimeout =
+            config.videoTimeout ??
+            (config.timeout ? config.timeout : DEFAULT_VIDEO_TIMEOUT);
+    }
+
+    // ============================================================================
+    // Private Helpers
+    // ============================================================================
+
+    private getHeaders(contentType?: string): Record<string, string> {
+        const headers: Record<string, string> = {};
+        if (contentType) {
+            headers["Content-Type"] = contentType;
+        }
+        if (this.apiKey) {
+            headers["Authorization"] = `Bearer ${this.apiKey}`;
+        }
+        return headers;
+    }
+
+    private async handleErrorResponse(response: Response): Promise<never> {
+        throw await pollinationsErrorFromResponse(response);
+    }
+
+    private buildQueryParams(
+        params: Record<string, unknown>,
+        includeKey: boolean = true,
+    ): string {
+        const searchParams = new URLSearchParams();
+
+        for (const [key, value] of Object.entries(params)) {
+            if (value === undefined || value === null) continue;
+
+            if (Array.isArray(value)) {
+                searchParams.set(key, value.join(","));
+            } else if (typeof value === "boolean") {
+                searchParams.set(key, value ? "true" : "false");
+            } else {
+                searchParams.set(key, String(value));
+            }
+        }
+
+        // Add API key to query params if set and requested
+        if (includeKey && this.apiKey) {
+            searchParams.set("key", this.apiKey);
+        }
+
+        return searchParams.toString();
+    }
+
+    /** Remove keys whose value is undefined (mutates and returns the body). */
+    private stripUndefined(
+        body: Record<string, unknown>,
+    ): Record<string, unknown> {
+        for (const key of Object.keys(body)) {
+            if (body[key] === undefined) delete body[key];
+        }
+        return body;
+    }
+
+    /**
+     * Run `fn` with exponential-backoff retries on retriable errors.
+     * `attempt` is passed into `fn` so callers can recompute per-attempt
+     * state (e.g. a fresh random seed) on each try.
+     */
+    private async withRetries<T>(
+        fn: (attempt: number) => Promise<T>,
+        fallbackMessage: string,
+    ): Promise<T> {
+        let lastError: Error = new Error(fallbackMessage);
+
+        for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+            try {
+                return await fn(attempt);
+            } catch (err) {
+                lastError = err as Error;
+
+                // Don't retry non-retriable errors (400, 401, 403, 404, 422)
+                if (!isRetriableError(err)) {
+                    throw lastError;
+                }
+
+                if (attempt < this.maxRetries - 1) {
+                    // Use Retry-After from rate limit errors, otherwise exponential backoff
+                    const retryAfter =
+                        err instanceof PollinationsError
+                            ? err.retryAfter
+                            : undefined;
+                    await sleep(getRetryDelay(attempt, retryAfter));
+                }
+            }
+        }
+
+        throw lastError;
+    }
+
+    // ============================================================================
+    // Image Generation
+    // ============================================================================
+
+    /** Build image URL with all params (internal use) */
+    private buildImageUrl(
+        prompt: string,
+        options: ImageGenerateOptions = {},
+        seed?: number,
+    ): string {
+        const params: Record<string, unknown> = {
+            model: options.model || "zimage",
+            width: options.width,
+            height: options.height,
+            seed: seed !== undefined ? seed : resolveSeed(options.seed),
+            safe: options.safe,
+            quality: options.quality,
+            image: options.referenceImage,
+            transparent: options.transparent,
+            guidance_scale: options.guidanceScale,
+            reasoning: options.reasoning,
+        };
+
+        const queryString = this.buildQueryParams(params);
+        const encodedPrompt = encodeURIComponent(prompt);
+
+        return `${this.baseUrl}/image/${encodedPrompt}${queryString ? `?${queryString}` : ""}`;
+    }
+
+    /**
+     * Generate an image URL from a text prompt.
+     * Hits the API first to authenticate, then returns a keyless URL that can be shared.
+     *
+     * @example
+     * ```ts
+     * const url = await pollinations.imageUrl('A beautiful sunset over mountains');
+     * // Use directly in <img src={url}> - no key exposed!
+     * ```
+     */
+    async imageUrl(
+        prompt: string,
+        options: ImageGenerateOptions = {},
+    ): Promise<string> {
+        const response = await this.image(prompt, options);
+        return response.url; // Already has key stripped
+    }
+
+    /**
+     * Generate an image and return it as binary data.
+     * Automatically retries up to 3 times with exponential backoff on retriable failures.
+     *
+     * @example
+     * ```ts
+     * const { buffer, contentType } = await pollinations.image('A cute robot');
+     * // Save to file or process the buffer
+     * ```
+     */
+    async image(
+        prompt: string,
+        options: ImageGenerateOptions = {},
+    ): Promise<ImageResponse> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        return this.withRetries(async (attempt) => {
+            // Generate new seed for each retry (or use resolved seed on first attempt)
+            const seed =
+                attempt === 0 ? resolveSeed(options.seed) : randomSeed();
+            const url = this.buildImageUrl(prompt, options, seed);
+
+            const response = await fetchWithTimeout(
+                url,
+                { headers: this.getHeaders() },
+                this.imageTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            const buffer = await response.arrayBuffer();
+            const contentType =
+                response.headers.get("content-type") || "image/jpeg";
+
+            return { buffer, contentType, url: stripKeyFromUrl(url) };
+        }, "Unknown error during image generation");
+    }
+
+    // ============================================================================
+    // Image Editing
+    // ============================================================================
+
+    /**
+     * Edit an image using the OpenAI-compatible endpoint (POST /v1/images/edits).
+     * Accepts JSON with image URLs or multipart/form-data file uploads.
+     *
+     * @example
+     * ```ts
+     * const result = await pollinations.imageEdit('Make the sky purple', {
+     *   image: 'https://example.com/photo.jpg',
+     *   model: 'flux',
+     * });
+     * ```
+     */
+    async imageEdit(
+        prompt: string,
+        options: ImageEditOptions = {},
+    ): Promise<ImageResponse> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const body: Record<string, unknown> = {
+            prompt,
+            model: options.model || "flux",
+        };
+
+        if (options.image) {
+            body.image = options.image;
+        }
+
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/v1/images/edits`,
+            {
+                method: "POST",
+                headers: this.getHeaders("application/json"),
+                body: JSON.stringify(body),
+            },
+            this.imageTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        const json = (await response.json()) as {
+            data: Array<{ url?: string; b64_json?: string }>;
+        };
+
+        const item = json.data?.[0];
+        if (!item) {
+            throw new PollinationsError(
+                "No image data in response",
+                "NO_IMAGE",
+                500,
+            );
+        }
+
+        return this.resolveImageItem(
+            item,
+            options.signal,
+            "Unexpected response format from image edit",
+        );
+    }
+
+    // ============================================================================
+    // Image Generation (OpenAI-compatible POST /v1/images/generations)
+    // ============================================================================
+
+    /**
+     * Generate image(s) via the OpenAI-compatible POST endpoint.
+     * Supports multi-image requests (`n > 1`) and both `url` / `b64_json`
+     * response formats.
+     *
+     * Returns a single `ImageResponse` when `n === 1`, or an array otherwise.
+     *
+     * @example
+     * ```ts
+     * // Single image, size string (OpenAI style)
+     * const img = await pollinations.imageGenerate('A cute robot', {
+     *   size: '1024x1024',
+     *   model: 'flux',
+     * });
+     *
+     * // Multiple images
+     * const imgs = await pollinations.imageGenerate('A cute robot', { n: 3 });
+     * ```
+     */
+    async imageGenerate(
+        prompt: string,
+        options: ImageGenerateV1Options = {},
+    ): Promise<ImageResponse | ImageResponse[]> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        // Resolve size: prefer explicit `size`, otherwise compose from width/height
+        let size = options.size;
+        if (!size && options.width && options.height) {
+            size = `${options.width}x${options.height}`;
+        }
+
+        const body: Record<string, unknown> = {
+            prompt,
+            model: options.model || "zimage",
+        };
+        if (size) body.size = size;
+        if (options.n !== undefined) body.n = options.n;
+        if (options.responseFormat)
+            body.response_format = options.responseFormat;
+        if (options.reasoning !== undefined) body.reasoning = options.reasoning;
+        if (options.seed !== undefined) body.seed = resolveSeed(options.seed);
+        if (options.quality) body.quality = options.quality;
+
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/v1/images/generations`,
+            {
+                method: "POST",
+                headers: this.getHeaders("application/json"),
+                body: JSON.stringify(body),
+            },
+            this.imageTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        const json = (await response.json()) as {
+            data: Array<{ url?: string; b64_json?: string }>;
+        };
+
+        const items = json.data || [];
+        if (items.length === 0) {
+            throw new PollinationsError(
+                "No image data in response",
+                "NO_IMAGE",
+                500,
+            );
+        }
+
+        const results = await Promise.all(
+            items.map((item) => this.resolveImageItem(item, options.signal)),
+        );
+
+        // Unwrap when a single image was produced (most common case)
+        if (results.length === 1) {
+            const [single] = results;
+            if (single) return single;
+        }
+        return results;
+    }
+
+    /** Fetch-or-decode a single OpenAI-style image item into an ImageResponse */
+    private async resolveImageItem(
+        item: { url?: string; b64_json?: string },
+        signal?: AbortSignal,
+        invalidResponseMessage = "Unexpected image item shape in response",
+    ): Promise<ImageResponse> {
+        if (item.url) {
+            const imgResponse = await fetchWithTimeout(
+                item.url,
+                {},
+                this.imageTimeout,
+                signal,
+            );
+            const buffer = await imgResponse.arrayBuffer();
+            const contentType =
+                imgResponse.headers.get("content-type") || "image/png";
+            return { buffer, contentType, url: item.url };
+        }
+        if (item.b64_json) {
+            const binary = atob(item.b64_json);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return {
+                buffer: bytes.buffer as ArrayBuffer,
+                contentType: "image/png",
+                url: "",
+            };
+        }
+        throw new PollinationsError(
+            invalidResponseMessage,
+            "INVALID_RESPONSE",
+            500,
+        );
+    }
+
+    // ============================================================================
+    // Video Generation
+    // ============================================================================
+
+    private validateVideoDuration(_model: string, duration?: number): void {
+        if (duration === undefined) return;
+
+        if (duration < 1 || duration > 30) {
+            throw new PollinationsError(
+                `Invalid duration: ${duration}. Must be between 1-30 seconds.`,
+                "INVALID_DURATION",
+                400,
+            );
+        }
+    }
+
+    /** Build video URL with all params (internal use) */
+    private buildVideoUrl(
+        prompt: string,
+        options: VideoGenerateOptions = {},
+        seed?: number,
+    ): string {
+        const model = options.model || "veo";
+        this.validateVideoDuration(model, options.duration);
+
+        const params: Record<string, unknown> = {
+            model,
+            duration: options.duration,
+            aspectRatio: options.aspectRatio,
+            seed: seed !== undefined ? seed : resolveSeed(options.seed),
+            audio: options.audio,
+            image: options.referenceImage,
+            safe: options.safe,
+        };
+
+        const queryString = this.buildQueryParams(params);
+        const encodedPrompt = encodeURIComponent(prompt);
+
+        return `${this.baseUrl}/video/${encodedPrompt}${queryString ? `?${queryString}` : ""}`;
+    }
+
+    /**
+     * Generate a video URL from a text prompt.
+     * Hits the API first to authenticate, then returns a keyless URL that can be shared.
+     *
+     * @example
+     * ```ts
+     * const url = await pollinations.videoUrl('A cat playing piano', { model: 'veo', duration: 4 });
+     * ```
+     */
+    async videoUrl(
+        prompt: string,
+        options: VideoGenerateOptions = {},
+    ): Promise<string> {
+        const response = await this.video(prompt, options);
+        return response.url; // Already has key stripped
+    }
+
+    /**
+     * Generate a video and return it as binary data.
+     * Automatically retries up to 3 times with exponential backoff on retriable failures.
+     * Note: Video generation can take several minutes - timeout is set to 10 minutes.
+     *
+     * @example
+     * ```ts
+     * const { buffer } = await pollinations.video('A dog running in a field', { duration: 6 });
+     * ```
+     */
+    async video(
+        prompt: string,
+        options: VideoGenerateOptions = {},
+    ): Promise<VideoResponse> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        return this.withRetries(async (attempt) => {
+            const seed =
+                attempt === 0 ? resolveSeed(options.seed) : randomSeed();
+            const url = this.buildVideoUrl(prompt, options, seed);
+
+            const response = await fetchWithTimeout(
+                url,
+                { headers: this.getHeaders() },
+                this.videoTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            const buffer = await response.arrayBuffer();
+            const contentType =
+                response.headers.get("content-type") || "video/mp4";
+
+            return { buffer, contentType, url: stripKeyFromUrl(url) };
+        }, "Unknown error during video generation");
+    }
+
+    // ============================================================================
+    // Text Generation
+    // ============================================================================
+
+    /**
+     * Generate text from a prompt.
+     * Automatically retries up to 3 times with exponential backoff on retriable failures.
+     *
+     * @example
+     * ```ts
+     * const text = await pollinations.text('Write a haiku about coding');
+     * console.log(text);
+     * ```
+     */
+    async text(
+        prompt: string,
+        options: TextGenerateOptions = {},
+    ): Promise<string> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        return this.withRetries(async (attempt) => {
+            const seed =
+                attempt === 0 ? resolveSeed(options.seed) : randomSeed();
+
+            const messages: Message[] = [];
+
+            if (options.systemPrompt) {
+                messages.push({
+                    role: "system",
+                    content: options.systemPrompt,
+                });
+            }
+            messages.push({ role: "user", content: prompt });
+
+            const body: Record<string, unknown> = {
+                messages,
+                model: options.model || "openai",
+                temperature: options.temperature,
+                max_tokens: options.maxTokens,
+                frequency_penalty: options.frequencyPenalty,
+                presence_penalty: options.presencePenalty,
+                seed,
+                stream: false,
+                private: options.private,
+            };
+
+            if (options.json) {
+                body.response_format = { type: "json_object" };
+            }
+
+            this.stripUndefined(body);
+
+            const response = await fetchWithTimeout(
+                `${this.baseUrl}/v1/chat/completions`,
+                {
+                    method: "POST",
+                    headers: this.getHeaders("application/json"),
+                    body: JSON.stringify(body),
+                },
+                this.textTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            const data = (await response.json()) as ChatResponse;
+            return data.choices[0]?.message?.content || "";
+        }, "Unknown error during text generation");
+    }
+
+    /**
+     * Generate text with streaming response.
+     * Automatically retries on connection failure before streaming starts.
+     *
+     * @example
+     * ```ts
+     * for await (const chunk of pollinations.textStream('Tell me a story')) {
+     *   process.stdout.write(chunk);
+     * }
+     * ```
+     */
+    async *textStream(
+        prompt: string,
+        options: Omit<TextGenerateOptions, "stream"> = {},
+    ): AsyncGenerator<string> {
+        if (!prompt || typeof prompt !== "string") {
+            throw new PollinationsError(
+                "Prompt is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const messages: Message[] = [];
+
+        if (options.systemPrompt) {
+            messages.push({ role: "system", content: options.systemPrompt });
+        }
+        messages.push({ role: "user", content: prompt });
+
+        const body: Record<string, unknown> = {
+            messages,
+            model: options.model || "openai",
+            temperature: options.temperature,
+            max_tokens: options.maxTokens,
+            frequency_penalty: options.frequencyPenalty,
+            presence_penalty: options.presencePenalty,
+            seed: options.seed,
+            stream: true,
+            private: options.private,
+        };
+
+        if (options.json) {
+            body.response_format = { type: "json_object" };
+        }
+
+        this.stripUndefined(body);
+
+        // Retry connection establishment; the body is built once above.
+        const response = await this.withRetries(async () => {
+            const res = await fetchWithTimeout(
+                `${this.baseUrl}/v1/chat/completions`,
+                {
+                    method: "POST",
+                    headers: this.getHeaders("application/json"),
+                    body: JSON.stringify(body),
+                },
+                this.textTimeout,
+                options.signal,
+            );
+
+            if (!res.ok) {
+                await this.handleErrorResponse(res);
+            }
+
+            return res;
+        }, "Unknown error during text stream");
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new PollinationsError("No response body", "NO_BODY", 500);
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const result = parseSSEBuffer<string>(buffer, (data) => {
+                    const json = JSON.parse(data) as ChatStreamChunk;
+                    return json.choices[0]?.delta?.content || null;
+                });
+
+                buffer = result.remainingBuffer;
+                for (const content of result.chunks) {
+                    yield content;
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
+    }
+
+    // ============================================================================
+    // Chat Completions (OpenAI-compatible)
+    // ============================================================================
+
+    /**
+     * Build the shared chat-completions request body (undefined fields stripped).
+     * `seed` is passed in explicitly so callers control resolution:
+     * `chat()` passes a per-attempt resolved seed, `chatStream()` passes the
+     * raw `options.seed` unchanged.
+     */
+    private buildChatBody(
+        messages: Message[],
+        options: Omit<ChatOptions, "stream">,
+        { stream, seed }: { stream: boolean; seed: number | undefined },
+    ): Record<string, unknown> {
+        return this.stripUndefined({
+            messages,
+            model: options.model || "openai",
+            temperature: options.temperature,
+            top_p: options.topP,
+            max_tokens: options.maxTokens,
+            frequency_penalty: options.frequencyPenalty,
+            presence_penalty: options.presencePenalty,
+            repetition_penalty: options.repetitionPenalty,
+            stop: options.stop,
+            seed,
+            stream,
+            stream_options: options.streamOptions,
+            response_format: options.responseFormat,
+            tools: options.tools,
+            tool_choice: options.toolChoice,
+            parallel_tool_calls: options.parallelToolCalls,
+            reasoning_effort: options.reasoningEffort,
+            modalities: options.modalities,
+            audio: options.audio,
+            user: options.user,
+            logit_bias: options.logitBias,
+            logprobs: options.logprobs,
+            top_logprobs: options.topLogprobs,
+            functions: options.functions,
+            function_call: options.functionCall,
+        });
+    }
+
+    /**
+     * Create a chat completion (OpenAI-compatible).
+     * Automatically retries up to 3 times with exponential backoff on retriable failures.
+     *
+     * @example
+     * ```ts
+     * const response = await pollinations.chat([
+     *   { role: 'user', content: 'What is the capital of France?' }
+     * ]);
+     * console.log(response.choices[0].message.content);
+     * ```
+     */
+    async chat(
+        messages: Message[],
+        options: ChatOptions = {},
+    ): Promise<ChatResponse> {
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            throw new PollinationsError(
+                "Messages array is required and cannot be empty",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        return this.withRetries(async (attempt) => {
+            const seed =
+                attempt === 0 ? resolveSeed(options.seed) : randomSeed();
+
+            const body = this.buildChatBody(messages, options, {
+                stream: false,
+                seed,
+            });
+
+            const response = await fetchWithTimeout(
+                `${this.baseUrl}/v1/chat/completions`,
+                {
+                    method: "POST",
+                    headers: this.getHeaders("application/json"),
+                    body: JSON.stringify(body),
+                },
+                this.textTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            return response.json() as Promise<ChatResponse>;
+        }, "Unknown error during chat completion");
+    }
+
+    /**
+     * Create a streaming chat completion.
+     * Automatically retries on connection failure before streaming starts.
+     *
+     * @example
+     * ```ts
+     * for await (const chunk of pollinations.chatStream([
+     *   { role: 'user', content: 'Write a poem' }
+     * ])) {
+     *   const content = chunk.choices[0]?.delta?.content;
+     *   if (content) process.stdout.write(content);
+     * }
+     * ```
+     */
+    async *chatStream(
+        messages: Message[],
+        options: Omit<ChatOptions, "stream"> = {},
+    ): AsyncGenerator<ChatStreamChunk> {
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            throw new PollinationsError(
+                "Messages array is required and cannot be empty",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        // chatStream preserves the raw seed (no per-attempt resolution) and
+        // builds the body once before the connection-retry loop.
+        const body = this.buildChatBody(messages, options, {
+            stream: true,
+            seed: options.seed,
+        });
+
+        // Retry connection establishment; the body is built once above.
+        const response = await this.withRetries(async () => {
+            const res = await fetchWithTimeout(
+                `${this.baseUrl}/v1/chat/completions`,
+                {
+                    method: "POST",
+                    headers: this.getHeaders("application/json"),
+                    body: JSON.stringify(body),
+                },
+                this.textTimeout,
+                options.signal,
+            );
+
+            if (!res.ok) {
+                await this.handleErrorResponse(res);
+            }
+
+            return res;
+        }, "Unknown error during chat stream");
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new PollinationsError("No response body", "NO_BODY", 500);
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const result = parseSSEBuffer<ChatStreamChunk>(
+                    buffer,
+                    (data) => JSON.parse(data) as ChatStreamChunk,
+                );
+
+                buffer = result.remainingBuffer;
+                for (const chunk of result.chunks) {
+                    yield chunk;
+                }
+            }
+        } finally {
+            reader.releaseLock();
+        }
+    }
+
+    // ============================================================================
+    // Audio Generation
+    // ============================================================================
+
+    /**
+     * Generate speech audio from text
+     *
+     * @example
+     * ```ts
+     * // Text-to-speech
+     * const { buffer } = await pollinations.audio('Hello, how are you today?', { voice: 'nova' });
+     *
+     * // Music generation
+     * const { buffer } = await pollinations.audio('upbeat jazz', { model: 'elevenmusic', duration: 30 });
+     * ```
+     */
+    async audio(
+        text: string,
+        options: AudioGenerateOptions = {},
+    ): Promise<AudioBinaryResponse> {
+        if (!text || typeof text !== "string") {
+            throw new PollinationsError(
+                "Text is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const params: Record<string, unknown> = {
+            voice: options.voice,
+            model: options.model,
+            duration: options.duration,
+            seed:
+                options.seed !== undefined
+                    ? resolveSeed(options.seed)
+                    : undefined,
+        };
+
+        const queryString = this.buildQueryParams(params);
+        const encodedText = encodeURIComponent(text);
+        const url = `${this.baseUrl}/audio/${encodedText}${queryString ? `?${queryString}` : ""}`;
+
+        const response = await fetchWithTimeout(
+            url,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        const buffer = await response.arrayBuffer();
+        const contentType =
+            response.headers.get("content-type") || "audio/mpeg";
+
+        return { buffer, contentType };
+    }
+
+    /**
+     * Generate speech using the OpenAI-compatible TTS endpoint (POST /v1/audio/speech).
+     *
+     * @example
+     * ```ts
+     * const { buffer } = await pollinations.audioSpeech('Hello world', { voice: 'nova' });
+     * ```
+     */
+    async audioSpeech(
+        text: string,
+        options: AudioGenerateOptions = {},
+    ): Promise<AudioBinaryResponse> {
+        if (!text || typeof text !== "string") {
+            throw new PollinationsError(
+                "Text is required and must be a string",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const body = {
+            input: text,
+            voice: options.voice || "alloy",
+            model: options.model || "elevenlabs",
+        };
+
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/v1/audio/speech`,
+            {
+                method: "POST",
+                headers: this.getHeaders("application/json"),
+                body: JSON.stringify(body),
+            },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        const buffer = await response.arrayBuffer();
+        const contentType =
+            response.headers.get("content-type") || "audio/mpeg";
+
+        return { buffer, contentType };
+    }
+
+    // ============================================================================
+    // Model Discovery
+    // ============================================================================
+
+    /**
+     * Get available text models
+     *
+     * @example
+     * ```ts
+     * const models = await pollinations.textModels();
+     * console.log(models.map(m => m.name));
+     * ```
+     */
+    async textModels(): Promise<ModelInfo[]> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/text/models`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        return response.json() as Promise<ModelInfo[]>;
+    }
+
+    /**
+     * Get available image models
+     *
+     * @example
+     * ```ts
+     * const models = await pollinations.imageModels();
+     * console.log(models.map(m => m.name));
+     * ```
+     */
+    async imageModels(): Promise<ModelInfo[]> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/image/models`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        return response.json() as Promise<ModelInfo[]>;
+    }
+
+    /**
+     * Get available models (OpenAI-compatible endpoint)
+     *
+     * @example
+     * ```ts
+     * const models = await pollinations.models();
+     * ```
+     */
+    async models(): Promise<ModelInfo[]> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/v1/models`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) {
+            await this.handleErrorResponse(response);
+        }
+
+        return response.json() as Promise<ModelInfo[]>;
+    }
+
+    // ============================================================================
+    // Speech-to-Text (Transcription)
+    // ============================================================================
+
+    /**
+     * Transcribe audio to text
+     *
+     * @example
+     * ```ts
+     * // From a file (Node.js)
+     * import fs from 'fs';
+     * const audioBuffer = fs.readFileSync('speech.mp3');
+     * const result = await pollinations.transcribe(audioBuffer, { model: 'whisper-large-v3' });
+     * console.log(result.text);
+     *
+     * // From a Blob (browser)
+     * const result = await pollinations.transcribe(audioBlob);
+     * ```
+     */
+    async transcribe(
+        audio: ArrayBuffer | Blob,
+        options: TranscribeOptions & { responseFormat: "verbose_json" },
+    ): Promise<TranscriptionVerboseResponse>;
+    async transcribe(
+        audio: ArrayBuffer | Blob,
+        options?: TranscribeOptions,
+    ): Promise<TranscriptionResponse>;
+    async transcribe(
+        audio: ArrayBuffer | Blob,
+        options: TranscribeOptions = {},
+    ): Promise<TranscriptionResponse | TranscriptionVerboseResponse> {
+        const formData = new FormData();
+
+        // Convert ArrayBuffer to Blob if needed
+        const blob =
+            audio instanceof Blob
+                ? audio
+                : new Blob([audio], { type: "audio/mpeg" });
+
+        formData.append("file", blob, "audio.mp3");
+        formData.append("model", options.model || "whisper-large-v3");
+
+        if (options.language) formData.append("language", options.language);
+        if (options.responseFormat)
+            formData.append("response_format", options.responseFormat);
+        if (options.prompt) formData.append("prompt", options.prompt);
+        if (options.temperature !== undefined)
+            formData.append("temperature", String(options.temperature));
+
+        return this.withRetries<
+            TranscriptionResponse | TranscriptionVerboseResponse
+        >(async () => {
+            const headers = this.getHeaders();
+            // Don't set Content-Type - fetch sets it with boundary for FormData
+
+            const response = await fetchWithTimeout(
+                `${this.baseUrl}/v1/audio/transcriptions`,
+                {
+                    method: "POST",
+                    headers,
+                    body: formData,
+                },
+                this.textTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            if (
+                options.responseFormat === "text" ||
+                options.responseFormat === "srt" ||
+                options.responseFormat === "vtt"
+            ) {
+                const text = await response.text();
+                return { text };
+            }
+
+            return response.json() as Promise<
+                TranscriptionResponse | TranscriptionVerboseResponse
+            >;
+        }, "Unknown error during transcription");
+    }
+
+    // ============================================================================
+    // Media Upload
+    // ============================================================================
+
+    /**
+     * Upload media (image, audio, video) and get a public URL
+     *
+     * @example
+     * ```ts
+     * // Upload from ArrayBuffer
+     * const result = await pollinations.upload(imageBuffer, { contentType: 'image/jpeg' });
+     * console.log(result.url); // https://media.pollinations.ai/abc123...
+     *
+     * // Upload from Blob (browser)
+     * const result = await pollinations.upload(file);
+     * ```
+     */
+    async upload(
+        data: ArrayBuffer | Blob,
+        options: UploadOptions = {},
+    ): Promise<UploadResponse> {
+        const formData = new FormData();
+
+        const blob =
+            data instanceof Blob
+                ? data
+                : new Blob([data], {
+                      type: options.contentType || "application/octet-stream",
+                  });
+
+        formData.append("file", blob, options.name || "upload");
+
+        const headers = this.getHeaders();
+
+        return this.withRetries(async () => {
+            const response = await fetchWithTimeout(
+                `https://media.pollinations.ai/upload`,
+                {
+                    method: "POST",
+                    headers,
+                    body: formData,
+                },
+                this.imageTimeout,
+                options.signal,
+            );
+
+            if (!response.ok) {
+                await this.handleErrorResponse(response);
+            }
+
+            return response.json() as Promise<UploadResponse>;
+        }, "Unknown error during upload");
+    }
+
+    // ============================================================================
+    // BYOP (Bring Your Own Pollen)
+    // ============================================================================
+
+    /**
+     * Build a BYOP authorization URL.
+     * Redirect users here to grant your app access to their Pollen balance.
+     *
+     * @example
+     * ```ts
+     * const url = pollinations.authorizeUrl({
+     *   redirectUrl: 'https://myapp.com/callback',
+     *   models: ['flux', 'openai'],
+     *   budget: 10,
+     *   permissions: ['profile', 'usage'],
+     * });
+     * // Redirect user to this URL
+     * ```
+     *
+     * Omit `budget` for the default cap.
+     */
+    static authorizeUrl(options: AuthorizeOptions): string {
+        const params = new URLSearchParams();
+        params.set("redirect_uri", options.redirectUrl);
+
+        if (options.appKey) params.set("client_id", options.appKey);
+        if (options.state) params.set("state", options.state);
+        if (options.models?.length)
+            params.set("models", options.models.join(","));
+        if (options.budget !== undefined)
+            params.set("budget", String(options.budget));
+        if (options.expiry !== undefined)
+            params.set("expiry", String(options.expiry));
+        if (options.permissions?.length)
+            params.set("scope", options.permissions.join(" "));
+
+        return `${options.authBaseUrl ?? AUTH_BASE_URL}/authorize?${params.toString()}`;
+    }
+
+    authorizeUrl(options: AuthorizeOptions): string {
+        return Pollinations.authorizeUrl(options);
+    }
+
+    // ============================================================================
+    // Device Flow (OAuth) — headless / CLI authentication
+    // ============================================================================
+
+    /**
+     * Start an OAuth device-code flow for headless or CLI authentication.
+     *
+     * Returns a handle immediately containing a short `userCode` and a
+     * `verificationUri` the user opens in their browser. Call `poll()` to
+     * block until the user approves (or rejects / the code expires) — it
+     * resolves to the access token.
+     *
+     * Static: does NOT require an existing SDK instance or API key. Use
+     * the returned access token to construct a `Pollinations` client.
+     *
+     * @example
+     * ```ts
+     * const auth = await Pollinations.authorizeDevice();
+     * console.log(`Visit ${auth.verificationUri} and enter: ${auth.userCode}`);
+     * const accessToken = await auth.poll();
+     * const client = new Pollinations({ apiKey: accessToken });
+     * ```
+     */
+    static async authorizeDevice(
+        options: AuthorizeDeviceOptions = {},
+    ): Promise<DeviceAuthorization> {
+        const clientId = options.clientId || DEVICE_FLOW_CLIENT_ID;
+        const scope = options.scope || DEVICE_FLOW_DEFAULT_SCOPE;
+
+        const response = await fetch(`${AUTH_BASE_URL}/api/device/code`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: clientId,
+                scope,
+            }).toString(),
+            signal: options.signal,
+        });
+
+        if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            throw new PollinationsError(
+                `Failed to start device flow: ${response.status} ${text}`,
+                "DEVICE_FLOW_START_FAILED",
+                response.status,
+            );
+        }
+
+        const code = (await response.json()) as DeviceCodeResponse;
+        const expiresAt = new Date(Date.now() + code.expires_in * 1000);
+        let pollMs = Math.max(code.interval, 5) * 1000;
+
+        const poll = async (): Promise<string> => {
+            while (Date.now() < expiresAt.getTime()) {
+                await sleep(pollMs);
+                if (options.signal?.aborted) {
+                    throw new PollinationsError(
+                        "Device authorization cancelled",
+                        "CANCELLED",
+                        499,
+                    );
+                }
+
+                const tokenRes = await fetch(
+                    `${AUTH_BASE_URL}/api/oauth/token`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: new URLSearchParams({
+                            grant_type:
+                                "urn:ietf:params:oauth:grant-type:device_code",
+                            device_code: code.device_code,
+                            client_id: clientId,
+                        }).toString(),
+                    },
+                );
+
+                const body = (await tokenRes
+                    .json()
+                    .catch(() => ({}))) as DeviceTokenResponse;
+
+                if (tokenRes.ok && body.access_token) {
+                    return body.access_token;
+                }
+                if (body.error === "authorization_pending") {
+                    continue;
+                }
+                if (body.error === "slow_down") {
+                    // RFC 8628 §3.5: back off by 5s on slow_down
+                    pollMs += 5000;
+                    continue;
+                }
+                throw new PollinationsError(
+                    body.error_description ||
+                        body.error ||
+                        "Device flow failed",
+                    body.error || "DEVICE_FLOW_ERROR",
+                    400,
+                );
+            }
+            throw new PollinationsError(
+                "Device code expired. Call Pollinations.authorizeDevice() again.",
+                "EXPIRED_TOKEN",
+                400,
+            );
+        };
+
+        return {
+            userCode: code.user_code,
+            verificationUri: code.verification_uri_complete,
+            expiresAt,
+            poll,
+        };
+    }
+
+    /**
+     * Get the authenticated user's identity via GET /api/device/userinfo.
+     * Uses the API key on this client instance.
+     *
+     * @example
+     * ```ts
+     * const user = await pollinations.userInfo();
+     * console.log(user.name, user.preferred_username);
+     * ```
+     */
+    async userInfo(options: RequestOptions = {}): Promise<UserInfo> {
+        const response = await fetchWithTimeout(
+            `${AUTH_BASE_URL}/api/device/userinfo`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<UserInfo>;
+    }
+
+    // ============================================================================
+    // Account
+    // ============================================================================
+
+    /**
+     * Get user profile information
+     *
+     * @example
+     * ```ts
+     * const profile = await pollinations.accountProfile();
+     * console.log(profile.githubUsername);
+     * ```
+     */
+    async accountProfile(): Promise<AccountProfile> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/profile`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<AccountProfile>;
+    }
+
+    /**
+     * Get account pollen balance
+     *
+     * @example
+     * ```ts
+     * const { balance } = await pollinations.accountBalance();
+     * console.log(`Balance: ${balance} pollen`);
+     * ```
+     */
+    async accountBalance(): Promise<AccountBalance> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/balance`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<AccountBalance>;
+    }
+
+    /**
+     * Get usage history
+     *
+     * @example
+     * ```ts
+     * const { usage } = await pollinations.accountUsage({ limit: 50 });
+     * usage.forEach(r => console.log(r.model, r.cost_usd));
+     * ```
+     */
+    async accountUsage(options: UsageOptions = {}): Promise<UsageResponse> {
+        const params = new URLSearchParams();
+        if (options.format) params.set("format", options.format);
+        if (options.days) params.set("days", String(options.days));
+        if (options.limit) params.set("limit", String(options.limit));
+        if (options.before) params.set("before", options.before);
+        if (options.granularity) params.set("granularity", options.granularity);
+        if (options.period) params.set("period", options.period);
+
+        const qs = params.toString();
+        const url = `${this.baseUrl}/account/usage${qs ? `?${qs}` : ""}`;
+
+        const response = await fetchWithTimeout(
+            url,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<UsageResponse>;
+    }
+
+    /**
+     * Get daily aggregated usage
+     *
+     * @example
+     * ```ts
+     * const { usage } = await pollinations.accountUsageDaily();
+     * usage.forEach(r => console.log(r.date, r.requests, r.cost_usd));
+     * ```
+     */
+    async accountUsageDaily(
+        options: DailyUsageOptions = {},
+    ): Promise<DailyUsageResponse> {
+        const params = new URLSearchParams();
+        if (options.format) params.set("format", options.format);
+        if (options.days) params.set("days", String(options.days));
+        if (options.granularity) params.set("granularity", options.granularity);
+        if (options.period) params.set("period", options.period);
+        if (options.api_key_ids && options.api_key_ids.length > 0)
+            params.set("api_key_ids", options.api_key_ids.join(","));
+
+        const qs = params.toString();
+        const url = `${this.baseUrl}/account/usage/daily${qs ? `?${qs}` : ""}`;
+
+        const response = await fetchWithTimeout(
+            url,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<DailyUsageResponse>;
+    }
+
+    /**
+     * Validate API key and get key information
+     *
+     * @example
+     * ```ts
+     * const keyInfo = await pollinations.validateKey();
+     * console.log(keyInfo.valid, keyInfo.type, keyInfo.permissions);
+     * ```
+     */
+    async validateKey(): Promise<KeyInfo> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/key`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<KeyInfo>;
+    }
+
+    /**
+     * Get usage history for the API key used by this client.
+     *
+     * @example
+     * ```ts
+     * const { usage } = await pollinations.accountKeyUsage({ limit: 50 });
+     * usage.forEach(r => console.log(r.model, r.cost_usd));
+     * ```
+     */
+    async accountKeyUsage(
+        options: KeyUsageOptions = {},
+    ): Promise<UsageResponse> {
+        const params = new URLSearchParams();
+        if (options.days) params.set("days", String(options.days));
+        if (options.limit) params.set("limit", String(options.limit));
+        if (options.before) params.set("before", options.before);
+        if (options.granularity) params.set("granularity", options.granularity);
+        if (options.period) params.set("period", options.period);
+
+        const qs = params.toString();
+        const url = `${this.baseUrl}/account/key/usage${qs ? `?${qs}` : ""}`;
+
+        const response = await fetchWithTimeout(
+            url,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<UsageResponse>;
+    }
+
+    // ============================================================================
+    // Account Keys (CRUD)
+    // ============================================================================
+
+    /**
+     * List all API keys on the authenticated account.
+     *
+     * @example
+     * ```ts
+     * const keys = await pollinations.listKeys();
+     * keys.forEach(k => console.log(k.name, k.prefix, k.enabled));
+     * ```
+     */
+    async listKeys(options: RequestOptions = {}): Promise<AccountKey[]> {
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/keys`,
+            { headers: this.getHeaders() },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        const body = (await response.json()) as { data?: AccountKey[] };
+        return body.data || [];
+    }
+
+    /**
+     * Create a new API key. The returned `key` field is ONLY shown once
+     * at creation — store it immediately.
+     *
+     * @example
+     * ```ts
+     * const created = await pollinations.createKey({
+     *   name: 'my-bot',
+     *   type: 'secret',
+     *   pollenBudget: 1000,
+     *   accountPermissions: ['usage'],
+     * });
+     * console.log('Save this now — it will not be shown again:', created.key);
+     * ```
+     */
+    async createKey(
+        options: CreateKeyOptions & RequestOptions,
+    ): Promise<CreatedKey> {
+        if (!options.name) {
+            throw new PollinationsError(
+                "name is required when creating a key",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const body: Record<string, unknown> = {
+            name: options.name,
+            type: options.type || "secret",
+        };
+        if (options.expiresIn !== undefined) body.expiresIn = options.expiresIn;
+        if (options.allowedModels) body.allowedModels = options.allowedModels;
+        if (options.pollenBudget !== undefined)
+            body.pollenBudget = options.pollenBudget;
+        if (options.accountPermissions)
+            body.accountPermissions = options.accountPermissions;
+        if (options.redirectUris) body.redirectUris = options.redirectUris;
+        if (options.earningsEnabled !== undefined)
+            body.earningsEnabled = options.earningsEnabled;
+
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/keys`,
+            {
+                method: "POST",
+                headers: this.getHeaders("application/json"),
+                body: JSON.stringify(body),
+            },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+        return response.json() as Promise<CreatedKey>;
+    }
+
+    /**
+     * Revoke an API key by ID. The id comes from `listKeys()`.
+     *
+     * @example
+     * ```ts
+     * await pollinations.revokeKey('key_abc123');
+     * ```
+     */
+    async revokeKey(id: string, options: RequestOptions = {}): Promise<void> {
+        if (!id || typeof id !== "string") {
+            throw new PollinationsError(
+                "Key id is required",
+                "INVALID_INPUT",
+                400,
+            );
+        }
+
+        const response = await fetchWithTimeout(
+            `${this.baseUrl}/account/keys/${encodeURIComponent(id)}`,
+            {
+                method: "DELETE",
+                headers: this.getHeaders(),
+            },
+            this.textTimeout,
+            options.signal,
+        );
+
+        if (!response.ok) await this.handleErrorResponse(response);
+    }
+}
