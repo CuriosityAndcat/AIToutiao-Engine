@@ -255,7 +255,7 @@ L5 网络层  →  web_search / web_fetch（兜底）
 | **B-2** | **Claim-Pipeline 事实锚定**：三阶段流水线（提取→验证→合并）根治事实幻觉，`fact_pipeline.py` 已产出，待接入 `write_stage` 迭代闭环 | ⏳ 模块就绪，待接入 | ⚠ 未提交 |
 | 批次 C | `graph.py` 通用编排决策（AgentGraph/Runner 接入生产循环） | ⏳ 待立项 | — |
 | 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | 本批次提交 |
-| **tests/ 阶段测试入口** | **各阶段功能测试框架**：`tests/run_stage.py`（`--stage 1|2|3|4|5`）+ `tests/_harness.py`（streamlit stub 注入后 import engine_app），直接调用项目真实函数做功能测试（非 LLM 模拟）；S3/S4/S5 已真跑实测通过，S2 因 torch/funasr 环境冲突待修 | ✅ 完成 (2026-07-14) | 本批次提交 |
+| **tests/ 阶段测试入口** | **各阶段功能测试框架**：`tests/run_stage.py`（`--stage 1|2|3|4|5`）+ `tests/_harness.py`（streamlit stub 注入后 import engine_app），直接调用项目真实函数做功能测试（非 LLM 模拟）；S2/S3/S4/S5 已真跑实测全部 PASS（S2 修复 streamlit 桩 `__file__` 缺失导致的 torch `_prims` 注册崩溃），S1 待 `--url` | ✅ 完成 (2026-07-14) | 本批次提交 |
 
 > ✅ **提交状态（2026-07-14）**：自 `4f944b6` 以来累积的 **17 个 modified + 15 个 untracked** 已统一提交到 `master`，覆盖网页UI重设计 / Agnes配图 / CodeBuddy配置 / 全球档案馆G-1 / Claim-Pipeline(B-2) / SAWORKFLOW方法论 / tests阶段测试入口 等批次；批次 D（`scripts/`+`docs/采集`+`docs/风格分析`）一并入库，留待后续 review。
 
@@ -271,4 +271,4 @@ L5 网络层  →  web_search / web_fetch（兜底）
 
 ---
 
-*最后更新：2026-07-14 · 新增 tests/ 阶段测试入口批次并实跑验证（S3/S4/S5 PASS，S2 待 torch/funasr 环境修复）；将自 4f944b6 以来累积的 17 modified + 15 untracked 统一提交 master。*
+*最后更新：2026-07-14 · tests/ 阶段测试入口 S2 修复（streamlit 桩补 `__file__` 字符串，根治 torch `_prims` 注册崩溃）后 5 阶段入口 S2/S3/S4/S5 全 PASS（S1 待 url）；AGENTS.md 进度表同步更新。*

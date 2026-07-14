@@ -53,6 +53,10 @@ class _StreamlitStub(types.ModuleType):
 
     def __init__(self):
         super().__init__("streamlit")
+        # __file__ 必须是真实字符串：torch 在注册 _prims 时经 inspect 遍历
+        # sys.modules，若 streamlit.__file__ 落到 __getattr__ 返回 _noop（函数），
+        # 会触发 "function object has no attribute endswith" -> prims 二次注册崩溃。
+        object.__setattr__(self, "__file__", "<streamlit-stub>")
         # session_state：预置阶段函数实际会用到的键
         object.__setattr__(self, "session_state", _AttrDict(
             logs=[],
