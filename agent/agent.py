@@ -7,6 +7,8 @@ Agent 定义 — 严格对齐 OpenAI Agents SDK agent.py
 Agent 是核心抽象：封装了 LLM 指令、可用工具、护栏和移交规则。
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

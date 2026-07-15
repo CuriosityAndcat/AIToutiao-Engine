@@ -4,6 +4,7 @@
 # 安装方式:
 #   pip install -r requirements.txt
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   playwright install chromium  # 发布阶段浏览器自动化（可选）
 # ============================================================
 
 # ── Web 界面 ──
@@ -19,16 +20,30 @@ sentencepiece==0.2.0
 transformers>=4.40.0
 faster-whisper>=1.0.0
 
-# ── 工具 ──
+# ── Agent 框架（Harness 层）──
+langgraph>=0.2.0
+
+# ── 数据处理 ──
 numpy>=2.0.0
+pandas>=2.0.0
+
+# ── 工具 ──
 opencc>=1.1.0
 requests>=2.31.0
+
+# ── 视频下载 ──
+yt-dlp>=2025.1.0
 
 # ── 发布后端 ──
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 patchright>=1.48.0
+playwright>=1.48.0
 pydantic>=2.9.0
 pydantic-settings>=2.6.0
 python-multipart>=0.0.12
 aiofiles>=24.1.0
+
+# ── ASR 转录（CPU 版，GPU 用户手动装对应版本）──
+# 以下两行需单独安装，因为 pip index-url 不支持 inline --extra-index-url
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu

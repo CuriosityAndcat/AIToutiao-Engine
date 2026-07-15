@@ -186,9 +186,9 @@ def evaluate_content(content: str, title: str, style: str,
     except Exception as e:
         _sys.stderr.write(f"[eval] 评估异常: {e}\n"); _sys.stderr.flush()
         return {
-            "score": QUALITY_PASS_THRESHOLD,
-            "feedback": f"评估模块异常，跳过评估: {e}",
-            "passed": True,
-            "dimensions": {"事实准确": 70, "信息完整": 70, "结构清晰": 70, "风格一致": 70, "去AI味": 70},
-            "threshold": QUALITY_PASS_THRESHOLD,
+            "score": 0,
+            "feedback": f"⚠️ 评估模块异常，内容未通过质量门（需人工复核）: {e}",
+            "passed": False,
+            "dimensions": {"事实准确": 0, "信息完整": 0, "结构清晰": 0, "风格一致": 0, "去AI味": 0},
+            "threshold": threshold,
         }

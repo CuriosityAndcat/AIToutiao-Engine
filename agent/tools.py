@@ -8,6 +8,9 @@ function_tool 将普通 Python 函数包装为 Agent 可调用的工具。
 ToolRegistry 提供工具的统一注册和查找。
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+# NOTE: 此模块无未来使用计划，可在批次 C 确认后删除
+
 from __future__ import annotations
 
 import functools

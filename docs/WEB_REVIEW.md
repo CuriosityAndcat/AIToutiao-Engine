@@ -1,8 +1,9 @@
 # 网页评审报告：engine_app.py（Streamlit 引擎界面）
 
-> 评审对象：`engine_app.py`（1899 行，基于 Streamlit 的「我们的网页」——端口 8502，暗色军事风主题，含 sidebar 配置、阶段指示灯、进度条、日志面板、质量溯源、分步控制）
+> 评审对象：`engine_app.py`（1899 行 → **当前 2249 行**，基于 Streamlit 的「我们的网页」——端口 8502，暗色军事风主题，含 sidebar 配置、阶段指示灯、进度条、日志面板、质量溯源、分步控制）
 > 评审方式：静态代码评审（未运行实测），遵循 Agentic Workflow 反射协议
-> 评审日期：2026-07-11
+> 评审日期：2026-07-11（初评）
+> **更新日期：2026-07-14（重设计完成 + audit 修复）**
 > 说明：仅评审、列出不足，**不做任何程序更改**
 
 ---
@@ -40,7 +41,7 @@
 9. **首启阻塞 45s**：`torch` 懒加载 spinner 无细节进度（1834 行）。
 
 ### D. 可维护性 / 架构
-10. **单文件 1899 行**：UI 渲染 + 流水线编排 + 线程 + subprocess + CSS 全混，应拆 `ui/`（sidebar/main/progress/logs/results）+ `pipeline/` 编排层。
+10. **单文件 2249 行**：UI 渲染 + 流水线编排 + 线程 + subprocess + CSS 全混，应拆 `ui/`（sidebar/main/progress/logs/results）+ `pipeline/` 编排层。
 11. **颜色硬编码**：`#0D1117`/`#FF6B35` 等散落 CSS 与 Python（1552 行 `status_color`、主标题），应提取为 CSS 变量 / 设计 token。
 12. **异常写法怪异**：`try/except Exception/except BaseException` 嵌套（1379–1388 行），功能可达但不规范，建议统一异常分层。
 
@@ -180,3 +181,27 @@
 - **严禁**：将上述任一外部仓库直接纳入本项目 git 树（或通过 `.gitignore` 整体排除）。
 
 > 注：14 项不足中，除 A1 / C8 / D10 / D11 由上述 3 个方案覆盖外，**其余 9 项（A2/B3/B4/C5/C6/C7/C9/D12/E13/E14）均为纯代码修复**，不依赖任何外部工具。
+
+
+## 八、2026-07-14 更新：已完成事项
+
+自初评以来已完成以下工作（详见 `docs/plans/2026-07-14-full-audit-plan.md` + `docs/plans/2026-07-14-ui-redesign-plan.md`）：
+
+| 事项 | 初评状态 | 当前状态 |
+|------|---------|---------|
+| A1 HTML 注入 | `unsafe_allow_html` 未转义 | ✅ `html.escape()` 已加固 |
+| B3 状态孤儿键 | 「写作」「改写」两键永不更新 | ✅ 已清理为 5 阶段一致 |
+| B4 进度魔法数字 | 散落硬编码 | ✅ `_PROGRESS_MAP` + `_PROGRESS` 集中管理 |
+| C5 文案误导 | 限死「抖音」 | ✅ 改为「视频链接（抖音/YouTube/B站等）」 |
+| C6 日志截断 | 200 行 | ✅ 扩至 500 行 + 「完整日志见 log/」提示 |
+| C8 无响应式 | layout="wide" | ✅ `@media` 断点已加 |
+| D11 颜色硬编码 | 散落 CSS/Python | ✅ CSS Token `:root` 变量 + `ui/styles.css` 独立文件 |
+| E13 色盲标签 | 仅颜色 | ✅ 阶段灯已加 emoji + 文字 |
+| E14 空状态 | 无引导 | ✅ URL 行有引导 caption |
+| — UI 重设计 | 3 Tab 混配置 | ✅ 2 Tab 工作台/成果 + Sidebar 统一收编 + Indigo 主题 |
+| — 日志轮转 | 无限增长 | ✅ 10MB×3 自动轮转 + `_TeeStderr` 句柄优化 |
+| — 单元测试 | 0 覆盖率 | ✅ 40 项单测 PASS（evaluation/write_stage/ai_writer/research/fact_pipeline） |
+
+**未完成（后续规划）**：
+- D10 包级拆分（`engine_app.py` → `ui/` 模块）：AGENTS.md E-3，Tier 3，待规划
+- Docker 化 / CI/CD / API Key 轮换：见 audit plan Phase 3

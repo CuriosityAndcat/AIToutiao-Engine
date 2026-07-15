@@ -8,6 +8,9 @@
 import sys as _sys
 import re as _re
 
+# 进度里程碑常量（消除魔法数字，对接 engine_app._PROGRESS_MAP）
+_SEARCH_DONE_PROGRESS = 0.34       # 初始搜索完成
+
 
 def _clean_search_noise(text: str) -> str:
     """过滤搜索结果中的 CSS/JS 代码噪声，保留自然语言内容。
@@ -146,7 +149,7 @@ def build_research_context(state, log_fn=print, progress_fn=None) -> str:
 
     if progress_fn:
         try:
-            progress_fn(0.34)
+            progress_fn(_SEARCH_DONE_PROGRESS)
         except Exception:
             pass
     return context

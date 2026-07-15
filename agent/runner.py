@@ -8,6 +8,8 @@ Runner 是 Agent 的执行引擎，负责编排完整的 Evaluator-Optimizer 循
 search → execute → evaluate → {PASS:END | FIXABLE:fix | BLOCKED:END}
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+
 from __future__ import annotations
 
 import uuid

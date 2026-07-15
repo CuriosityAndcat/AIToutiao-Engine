@@ -102,7 +102,10 @@ def load_engine_app():
 def make_state(run_id: str = "test_sta_000", **overrides) -> Any:
     """构造最小可用的 PipelineState（run_dir 落在 outputs/test_sta/ 下）。"""
     engine = load_engine_app()
-    return engine.PipelineState(run_id=run_id, **overrides)
+    state = engine.PipelineState(run_id=run_id, **overrides)
+    # 确保 run_dir 存在（write_stage 写文件前不自动建目录）
+    state.run_dir.mkdir(parents=True, exist_ok=True)
+    return state
 
 
 def find_latest_article() -> Optional[Path]:

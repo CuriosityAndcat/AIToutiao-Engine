@@ -51,7 +51,7 @@
 - **处理**：`write_stage.research_and_write(state, hooks) -> bool`
   - 内部调用 `research.build_research_context` → `evaluation.evaluate_content`
   - 集成 `agent.memory.WorkingMemory` 跨轮反思累积
-  - 最大轮数 `MAX_RESEARCH_ITERATIONS = 3`（源码 `write_stage.py:22`）
+  - 最大轮数 `MAX_RESEARCH_ITERATIONS = 10`（源码 `write_stage.py:24`；Claim-Pipeline 模式建议 5 轮）
 - **输出**：
   - 返回值 `bool`（成功 / 失败）
   - `state.outputs.content` / `title` 写入最终稿

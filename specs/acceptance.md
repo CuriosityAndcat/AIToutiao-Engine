@@ -35,6 +35,7 @@ evaluate_content(content: str, title: str, style: str, research_context: str = "
 2. **通用通过条件（默认）**：
    - `score >= QUALITY_PASS_THRESHOLD`（= **75**）
    - 且 5 个维度中**任意一个不低于 50**
+   - **事实准确性硬门槛**：`FACT_HARD_FLOOR = 80`（`evaluation.py:10`），事实准确性维度低于此值直接判不通过，不受通用阈值 75 影响
 3. **研究-写作阶段专用条件**：
    - `write_stage.py` 调用 `evaluate_content(..., threshold=80)`，要求 `score >= 80`
    - 且 5 个维度中**任意一个不低于 50**
@@ -43,6 +44,7 @@ evaluate_content(content: str, title: str, style: str, research_context: str = "
 
 > 源码常量：
 > - 通用通过线：`evaluation.py:9` → `QUALITY_PASS_THRESHOLD = 75`
+> - 事实硬门槛：`evaluation.py:10` → `FACT_HARD_FLOOR = 80`
 > - 研究-写作专用线：`write_stage.py:25` → `RESEARCH_WRITE_PASS_THRESHOLD = 80`
 > - 单维下限：`evaluation.py:133` → `if any(v < 50 for v in dimensions.values()): passed = False`
 
@@ -66,7 +68,7 @@ evaluate_content(content: str, title: str, style: str, research_context: str = "
 1. **XML 解析**：`<evaluation>` / `<score>` / `<dimensions>` / `<feedback>`
 2. **JSON 解析**：兼容旧格式
 3. **规则判断**：无反馈时 `content > 100` 字判 `PASS`，否则 `FAIL`，`score = 50`
-4. **模块异常**：返回 `passed=True, score=75, 维度全 70`（跳过评估，记 stderr）
+4. **模块异常**：返回 `passed=False, score=0, 维度全 0`（不再默认放行，由流水线自愈机制接管重试）
 
 ---
 

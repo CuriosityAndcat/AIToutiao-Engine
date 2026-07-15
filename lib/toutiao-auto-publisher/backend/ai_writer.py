@@ -14,8 +14,9 @@ AI 内容生成模块
 """
 import sys
 import time
+import traceback
 from pathlib import Path
-from openai import OpenAI
+from openai import APIError, OpenAI, RateLimitError
 
 # ── 确保 backend 目录在 Python 路径中 ──
 # 当 ai_writer.py 被独立导入时（如 streamlit_app.py 或 CLI 脚本），需要 backend 目录在路径中
@@ -94,6 +95,8 @@ class AIWriter:
         self.client = OpenAI(
             api_key=settings.AI_API_KEY,
             base_url=settings.AI_BASE_URL or None,
+            timeout=60.0,
+            max_retries=2,
         )
         self.model = settings.AI_MODEL
 
@@ -112,6 +115,9 @@ class AIWriter:
             system_prompt: 系统消息内容（用于固化角色和风格约束）
             max_tokens: 最大输出 token 数
             temperature: 温度参数，默认使用配置值
+
+        Returns:
+            模型返回文本，异常时返回空字符串（上层调用方需检测并处理）。
         """
         if not settings.AI_API_KEY:
             raise ValueError("未配置 AI_API_KEY，请在 .env 文件中设置")
@@ -121,13 +127,38 @@ class AIWriter:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_tokens or settings.AI_MAX_TOKENS,
-            temperature=temperature if temperature is not None else settings.AI_TEMPERATURE,
-        )
-        return response.choices[0].message.content.strip()
+        _retries = 0
+        _max_retries = 3
+        while _retries <= _max_retries:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=max_tokens or settings.AI_MAX_TOKENS,
+                    temperature=temperature if temperature is not None else settings.AI_TEMPERATURE,
+                )
+                return response.choices[0].message.content.strip()
+            except RateLimitError:
+                _retries += 1
+                if _retries > _max_retries:
+                    sys.stderr.write(
+                        f"[ai_writer] RateLimitError 已达 {_max_retries} 次重试上限，放弃调用\n"
+                    )
+                    sys.stderr.flush()
+                    return ""
+                _wait = 2 ** _retries  # 指数退避：2/4/8 秒
+                sys.stderr.write(
+                    f"[ai_writer] RateLimitError，{_wait}s 后重试 ({_retries}/{_max_retries})\n"
+                )
+                sys.stderr.flush()
+                time.sleep(_wait)
+            except Exception as e:
+                sys.stderr.write(
+                    f"[ai_writer] API 调用失败: {type(e).__name__}: {e}\n"
+                    f"  traceback: {traceback.format_exc()[:300]}\n"
+                )
+                sys.stderr.flush()
+                return ""
 
     def generate_toutie(
         self,
@@ -166,21 +197,8 @@ class AIWriter:
             temperature=temperature,
         )
 
-        # 解析标题：各风格 toutie prompt 已统一要求输出「标题：xxx」格式
-        # （对齐 generate_article 的解析逻辑，根治微头条内容缺失标题的问题）
-        title = ""
-        body = content
-        if "标题：" in content:
-            _parts = content.split("标题：", 1)
-            if len(_parts) > 1:
-                _after = _parts[1]
-                _end = _after.find("\n")
-                if _end != -1:
-                    title = _after[:_end].strip()
-                    body = _after[_end:].strip()
-                else:
-                    title = _after.strip()
-                    body = _after.strip()
+        # 解析标题
+        title, body = self._parse_title_from_content(content)
 
         return {
             "title": title,
@@ -255,19 +273,7 @@ class AIWriter:
         )
 
         # 解析标题
-        title = ""
-        body = content
-        if "标题：" in content:
-            _parts = content.split("标题：", 1)
-            if len(_parts) > 1:
-                _after = _parts[1]
-                _end = _after.find("\n")
-                if _end != -1:
-                    title = _after[:_end].strip()
-                    body = _after[_end:].strip()
-                else:
-                    title = _after.strip()
-                    body = _after.strip()
+        title, body = self._parse_title_from_content(content)
 
         return {
             "title": title,
@@ -286,20 +292,7 @@ class AIWriter:
         result = self._call_ai(prompt, system_prompt=_FACT_BOUNDARY_SYSTEM, max_tokens=max_chars * 2)
 
         # 解析标题和正文
-        title = ""
-        content = result
-
-        if "标题：" in result:
-            parts = result.split("标题：", 1)
-            if len(parts) > 1:
-                title_and_rest = parts[1]
-                title_end = title_and_rest.find("\n")
-                if title_end != -1:
-                    title = title_and_rest[:title_end].strip()
-                    content = title_and_rest[title_end:].strip()
-                else:
-                    title = title_and_rest.strip()
-                    content = title_and_rest.strip()
+        title, content = self._parse_title_from_content(result)
 
         # 清理正文前缀
         if content.startswith("正文："):
@@ -310,6 +303,28 @@ class AIWriter:
             "content": content,
             "char_count": len(content),
         }
+
+    @staticmethod
+    def _parse_title_from_content(text: str) -> tuple:
+        """从生成内容中解析「标题：xxx」格式，返回 (title, body)。
+
+        各风格 prompt 已统一要求输出「标题：xxx」格式。
+        若内容不含「标题：」分隔符，则 title 为空字符串，body 为全文。
+        """
+        title = ""
+        body = text
+        if "标题：" in text:
+            _parts = text.split("标题：", 1)
+            if len(_parts) > 1:
+                _after = _parts[1]
+                _end = _after.find("\n")
+                if _end != -1:
+                    title = _after[:_end].strip()
+                    body = _after[_end:].strip()
+                else:
+                    title = _after.strip()
+                    body = _after.strip()
+        return title, body
 
     def generate(
         self,

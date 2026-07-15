@@ -177,7 +177,10 @@
 | 路径 | 类型 | 职责 | 状态 |
 |------|------|------|------|
 | `.codebuddy/skills/ui-ux-pro-max/` | Skill | UI/UX 设计智能库 — 67 种风格 / 161 套配色 / 57 组字体 / 99 条 UX 指南 / 22 个技术栈，含 BM25 搜索脚本 | ✅ 已安装 (2026-07-13) |
+| `.codebuddy/skills/humanizer-main/` | Skill | 英文去AI味润色 — 33 个 AI 写作模式检测（内容/语言/风格/交流/填充），草稿→审计→终稿流程，Voice Calibration，防误判指引。基于 Wikipedia Signs of AI writing | ✅ 已安装 (2026-07-15) |
 | `.codebuddy/agents/ui-designer.md` | Subagent (manual) | Streamlit UI 设计师 — 专注本项目的界面设计/优化/审查，引用 ui-ux-pro-max Skill | ✅ 已创建 (2026-07-13) |
+| `.codebuddy/agents/project-manager.md` | Subagent (agentic) | 项目经理 — SAWORKFLOW 任务拆解与范围控制者，把自然语言任务/规格拆成可执行的 [NEXUS-] 阶段任务清单，守护质量门与进度 | ✅ 已创建 (2026-07-15) |
+| `.codebuddy/agents/content-humanizer.md` | Subagent (agentic) | 去AI味润色编辑 — 组合 humanizer-main（33 模式）与 agency 内容创作者角色，对文本/成稿做事后人工化润色，evaluation.py 第5维可选二次审计门 | ✅ 已创建 (2026-07-15) |
 | `.codebuddy/rules/MAP.mdc` | Rule | 历史规则（`agentic-workflow.mdc` 等），按 `.mdc` 扩展名自动加载 | ✅ 已有 |
 | `.codebuddy/memory/` | Working Memory | 跨会话持久化记忆（`MEMORY.md` + 每日 `YYYY-MM-DD.md`） | ✅ 运行中 |
 
@@ -246,16 +249,17 @@ L5 网络层  →  web_search / web_fetch（兜底）
 | 批次 B | 护栏接线（Input/Policy/Output 三层接入 `write_stage`） | ✅ 完成 | `5c1b643` |
 | D11+C8 | CSS 颜色 token 化（`:root` 变量替换 16 处硬编码）+ 响应式 `@media` 断点 | ✅ 完成 | `5c1b643` |
 | **E-2** | **写作风格切换**：屏蔽 military/sharp/data/flash/discussion，接入 `docs/风格分析` 4 位作者（包明说默认+晋说+全球档案馆+听风的蚕），新增 3 prompt 模块并复用 `_red_lines` 红线 | ✅ 完成 | `4f944b6` |
-| **网页UI重设计** | **Track1 三Tab分区（运行监控/成果展示/配置）+ Track2 token补全/卡片阴影/阶段连接线/质检`st.dataframe`整宽 + Track3 首启`st.status`/fragment局部刷新防闪 + 浅色主题切换**（`engine_app.py` UI 层，零生产逻辑改动，零新增依赖） | ✅ 完成 | ⚠ 未提交 |
-| **方法论落地** | **SAWORKFLOW 操作方法论**：superpowers-zh 规划/review + agency-agents-zh 分角色执行，两阶段协议 + 标准 `[NEXUS-]` 模板 + 质量门(evaluation.py+write_stage)，纯对话零程序改动 | ✅ 完成 | ⚠ 未提交 |
-| **Agnes 配图接入** | **Agnes Image 2.0 Flash 替换 Pollinations**：`engine_app.py` 配图链路全切中文 prompt + Agnes API，文件大小提升 25–30 倍（~1.5 MB vs ~50 KB），中文 prompt 体系 ERNIE 优化，配置面板新增 Agnes 三项 | ✅ 完成 | ⚠ 未提交 |
-| **CodeBuddy配置** | **Skill + Agent 落地**：`ui-ux-pro-max` Skill（67风格/161配色/BM25搜索）→ `.codebuddy/skills/`，`ui-designer` Subagent → `.codebuddy/agents/`，AGENTS.md 补入 `.codebuddy/` + `docs/CodeBuddy/` 两章 | ✅ 完成 | ⚠ 未提交 |
-| **G-1** | **全球档案馆风格 Prompt 修复**：文体错位修正（分析评论体→场景代入叙事体）+ 章节电影感 + 金句多样性。Layer A (`global_archive.py` 5处) + Layer B (`humanize.py` 3处)，~60行，零生产逻辑变更 | ✅ 完成 (2026-07-14) | ⚠ 未提交 |
+| **网页UI重设计** | **Track1 三Tab分区（运行监控/成果展示/配置）+ Track2 token补全/卡片阴影/阶段连接线/质检`st.dataframe`整宽 + Track3 首启`st.status`/fragment局部刷新防闪 + 浅色主题切换**（`engine_app.py` UI 层，零生产逻辑改动，零新增依赖） | ✅ 完成 | `0a2d6a1` |
+| **方法论落地** | **SAWORKFLOW 操作方法论**：superpowers-zh 规划/review + agency-agents-zh 分角色执行，两阶段协议 + 标准 `[NEXUS-]` 模板 + 质量门(evaluation.py+write_stage)，纯对话零程序改动 | ✅ 完成 | `0a2d6a1` |
+| **Agnes 配图接入** | **Agnes Image 2.0 Flash 替换 Pollinations**：`engine_app.py` 配图链路全切中文 prompt + Agnes API，文件大小提升 25–30 倍（~1.5 MB vs ~50 KB），中文 prompt 体系 ERNIE 优化，配置面板新增 Agnes 三项 | ✅ 完成 | `0a2d6a1` |
+| **CodeBuddy配置** | **Skill + Agent 落地**：`ui-ux-pro-max` Skill（67风格/161配色/BM25搜索）→ `.codebuddy/skills/`，`ui-designer` Subagent → `.codebuddy/agents/`，AGENTS.md 补入 `.codebuddy/` + `docs/CodeBuddy/` 两章 | ✅ 完成 | `0a2d6a1` |
+| **G-1** | **全球档案馆风格 Prompt 修复**：文体错位修正（分析评论体→场景代入叙事体）+ 章节电影感 + 金句多样性。Layer A (`global_archive.py` 5处) + Layer B (`humanize.py` 3处)，~60行，零生产逻辑变更 | ✅ 完成 (2026-07-14) | `0a2d6a1` |
 | E-3 | 包级拆分（`engine_app.py` 1899 行 → `ui/` 模块），Tier 3 需先出 Plan | ⏳ 待规划 | — |
-| **B-2** | **Claim-Pipeline 事实锚定**：三阶段流水线（提取→验证→合并）根治事实幻觉，`fact_pipeline.py` 已产出，待接入 `write_stage` 迭代闭环 | ⏳ 模块就绪，待接入 | ⚠ 未提交 |
+| **B-2** | **Claim-Pipeline 事实锚定**：三阶段流水线（提取→验证→合并）根治事实幻觉，`fact_pipeline.py` 已产出，待接入 `write_stage` 迭代闭环 | ⏳ 模块就绪，待接入 | `0a2d6a1` |
 | 批次 C | `graph.py` 通用编排决策（AgentGraph/Runner 接入生产循环） | ⏳ 待立项 | — |
-| 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | 本批次提交 |
-| **tests/ 阶段测试入口** | **各阶段功能测试框架**：`tests/run_stage.py`（`--stage 1|2|3|4|5`）+ `tests/_harness.py`（streamlit stub 注入后 import engine_app），直接调用项目真实函数做功能测试（非 LLM 模拟）；S2/S3/S4/S5 已真跑实测全部 PASS（S2 修复 streamlit 桩 `__file__` 缺失导致的 torch `_prims` 注册崩溃），S1 待 `--url` | ✅ 完成 (2026-07-14) | 本批次提交 |
+| 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | `0a2d6a1` |
+| **tests/ 阶段测试入口** | **各阶段功能测试框架**：`tests/run_stage.py`（`--stage 1|2|3|4|5`）+ `tests/_harness.py`（streamlit stub 注入后 import engine_app），直接调用项目真实函数做功能测试（非 LLM 模拟）；S2/S3/S4/S5 已真跑实测全部 PASS（S2 修复 streamlit 桩 `__file__` 缺失导致的 torch `_prims` 注册崩溃），S1 待 `--url` | ✅ 完成 (2026-07-14) | `0a2d6a1` `aecc51b` |
+| **LOOP-1** | **S3→S4→S5 质量闭环 LOOP**：`tests/run_loop.py` — 外层 5 轮 LOOP + 每阶段内 3 次重试 + 评审门禁（S3: evaluation.py 5维 §1-§3 / S4: ARTICLE_SPEC §5 P-01~P-05 / S5: §4 输出验证），评审不通过→注入反馈→修改重试，全阶段通过才结束。reality-checker 审查修复 3 严重 + 4 中等缺陷后出站 | ✅ 完成 (2026-07-15) | 待提交 |
 
 > ✅ **提交状态（2026-07-14）**：自 `4f944b6` 以来累积的 **17 个 modified + 15 个 untracked** 已统一提交到 `master`，覆盖网页UI重设计 / Agnes配图 / CodeBuddy配置 / 全球档案馆G-1 / Claim-Pipeline(B-2) / SAWORKFLOW方法论 / tests阶段测试入口 等批次；批次 D（`scripts/`+`docs/采集`+`docs/风格分析`）一并入库，留待后续 review。
 
@@ -269,6 +273,10 @@ L5 网络层  →  web_search / web_fetch（兜底）
 - `docs/agentic-workflow.md` / `docs/role_agent_frameworks.md` / `docs/superpowers_review.md` / `docs/superpowers_x_agency.md` — 框架调研笔记
 - `tests/`（3 文件：`__init__.py` / `_harness.py` / `run_stage.py`）— 各阶段功能测试入口（直接调项目真实函数，非 LLM 模拟）
 
+**当前未跟踪（仅 2 个新增文件，待后续提交）**：
+- `docs/Skills/agency-agents-zh-main/PROJECT-AGENT-MAP.md` — agency-agents-zh 项目→角色映射表
+- `docs/Skills/agency-agents-zh-main/REPO-UNDERSTANDING.md` — 仓库理解说明
+
 ---
 
-*最后更新：2026-07-14 · tests/ 阶段测试入口 S2 修复（streamlit 桩补 `__file__` 字符串，根治 torch `_prims` 注册崩溃）后 5 阶段入口 S2/S3/S4/S5 全 PASS（S1 待 url）；AGENTS.md 进度表同步更新。*
+*最后更新：2026-07-15 · 新增 LOOP-1 批次（S3→S4→S5 质量闭环 LOOP，tests/run_loop.py）；reality-checker 审查通过（3严重+4中等已修复）。*

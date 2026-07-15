@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import re
+
 import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
@@ -94,644 +96,12 @@ def _ensure_transcribe_imports():
 # ============================================================
 # 自定义 CSS（暗色新闻编辑风 · 含浅色双主题）
 # ============================================================
-def _inject_css():
-    """注入全局样式。统一 token 体系（颜色/间距/圆角/字体/阴影/动效），
-    支持浅色主题切换（原生 Streamlit 控件 + session_state，无 JS 注入）。
-    v2: Google Fonts 加持、玻璃态卡片、统一过渡动效、无障碍焦点环、响应式增强。"""
-    _css = (
-        """
-    <style>
-        /* ── Google Fonts ── */
-        @import url('https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Roboto:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
-        /* ═══════════════════════════════════════════
-           设计 Token（暗色 / 浅色按 session_state 注入）
-           ═══════════════════════════════════════════ */
-        :root {
-            /*THEME_TOKENS*/
-            /* ── 动效时长 ── */
-            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-            --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-            --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
-            /* ── 玻璃态 ── */
-            --glass-bg: rgba(22, 27, 34, 0.65);
-            --glass-border: rgba(255, 255, 255, 0.06);
-            --glass-blur: 12px;
-            /* ── 层级 ── */
-            --z-dropdown: 100; --z-sticky: 200; --z-overlay: 300; --z-modal: 400; --z-toast: 500;
-        }
-
-        /* ═══════════════════════════════════════════
-           基础重置
-           ═══════════════════════════════════════════ */
-        .stApp, .stApp .main, [data-testid="stAppViewContainer"] {
-            background-color: var(--bg-base);
-            color: var(--text);
-            transition: background-color var(--transition-base), color var(--transition-base);
-        }
-        footer { visibility: hidden; }
-
-        /* ── 全局滚动条美化 ── */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 3px;
-            transition: background var(--transition-fast);
-        }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
-        /* ── 全局选择颜色 ── */
-        ::selection { background: var(--accent-glow); color: var(--text); }
-
-        /* ── 全局焦点环（无障碍） ── */
-        :focus-visible {
-            outline: 2px solid var(--accent) !important;
-            outline-offset: 2px !important;
-            border-radius: var(--radius-sm);
-        }
-
-        /* ═══════════════════════════════════════════
-           主标题 — 渐变文字
-           ═══════════════════════════════════════════ */
-        .main-header {
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 60%, var(--info) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            font-family: var(--font-heading);
-            font-size: clamp(22px, 4vw, 32px);
-            font-weight: 700;
-            text-align: center;
-            padding: 12px 0 6px;
-            margin-bottom: 4px;
-            letter-spacing: -0.02em;
-        }
-
-        /* ═══════════════════════════════════════════
-           状态药丸
-           ═══════════════════════════════════════════ */
-        .status-pill {
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: 13px; font-weight: 500;
-            padding: 4px 16px; border-radius: 999px;
-            margin-bottom: var(--space-4);
-            font-family: var(--font-sans);
-            transition: all var(--transition-base);
-            backdrop-filter: blur(var(--glass-blur));
-            -webkit-backdrop-filter: blur(var(--glass-blur));
-        }
-        .status-pill::before {
-            content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-        }
-        .status-pill.running {
-            color: var(--warning); background: var(--bg-elevated);
-            border: 1px solid var(--warning);
-        }
-        .status-pill.running::before {
-            background: var(--warning);
-            animation: pulse-dot 1.2s ease-in-out infinite;
-        }
-        .status-pill.done {
-            color: var(--success); background: var(--bg-elevated);
-            border: 1px solid var(--success);
-        }
-        .status-pill.done::before { background: var(--success); }
-        .status-pill.ready {
-            color: var(--text-muted); background: var(--bg-elevated);
-            border: 1px solid var(--border);
-        }
-        .status-pill.ready::before { background: var(--text-muted); }
-        @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.75); } }
-
-        /* ═══════════════════════════════════════════
-           阶段流程（灯 + 连接线）
-           ═══════════════════════════════════════════ */
-        .stage-flow {
-            display: flex; align-items: flex-start; justify-content: space-between;
-            margin: var(--space-4) 0 var(--space-5);
-            gap: var(--space-1);
-        }
-        .stage-step {
-            flex: 1; text-align: center; position: relative;
-            transition: transform var(--transition-base);
-        }
-        .stage-step:not(:last-child)::after {
-            content: ""; position: absolute; top: 11px; left: 55%; width: 90%;
-            height: 2px; background: var(--border);
-            z-index: 0; border-radius: 1px;
-            transition: background var(--transition-slow);
-        }
-        .stage-step.done:not(:last-child)::after {
-            background: linear-gradient(90deg, var(--success), var(--border));
-        }
-        .stage-step .dot {
-            position: relative; z-index: 1;
-            display: inline-flex; align-items: center; justify-content: center;
-            width: 22px; height: 22px; border-radius: 50%;
-            border: 2px solid var(--border);
-            background: var(--bg-surface);
-            font-size: 10px; line-height: 1; font-weight: 700;
-            color: var(--text-muted);
-            transition: all var(--transition-base);
-        }
-        .stage-step.pending .dot { color: var(--text-muted); }
-        .stage-step.done .dot {
-            background: var(--success); border-color: var(--success);
-            color: #fff; box-shadow: 0 0 8px rgba(63, 185, 80, 0.35);
-        }
-        .stage-step.running .dot {
-            background: var(--accent); border-color: var(--accent);
-            color: #fff;
-            animation: pulse-dot 1.2s ease-in-out infinite;
-            box-shadow: 0 0 12px var(--accent-glow);
-        }
-        .stage-step.failed .dot {
-            background: var(--danger); border-color: var(--danger);
-            color: #fff; box-shadow: 0 0 8px rgba(248, 81, 73, 0.35);
-        }
-        .stage-step .label {
-            font-size: 11px; color: var(--text-muted); margin-top: 5px;
-            font-family: var(--font-sans); font-weight: 500;
-            transition: color var(--transition-base);
-        }
-        .stage-step.done .label { color: var(--text); }
-        .stage-step.running .label { color: var(--accent); font-weight: 600; }
-        .stage-step .state {
-            font-size: 10px; margin-top: 1px; font-family: var(--font-sans);
-            font-weight: 500; transition: color var(--transition-base);
-        }
-        .stage-step.done .state { color: var(--success); }
-        .stage-step.running .state { color: var(--accent); }
-        .stage-step.failed .state { color: var(--danger); }
-        .stage-step.pending .state { color: var(--text-muted); }
-
-        /* ═══════════════════════════════════════════
-           日志容器（终端风格）
-           ═══════════════════════════════════════════ */
-        .log-container {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            padding: var(--space-3);
-            max-height: 340px;
-            overflow-y: auto;
-            font-family: var(--font-mono);
-            font-size: 12.5px;
-            color: var(--text);
-            line-height: 1.7;
-            box-shadow: var(--shadow-panel);
-            position: relative;
-        }
-        .log-container::before {
-            content: "";
-            position: sticky; top: 0; left: 0; right: 0; z-index: 2;
-            display: block; height: var(--space-2);
-            background: linear-gradient(180deg, var(--bg-surface) 0%, transparent 100%);
-            pointer-events: none;
-            margin: calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0;
-            padding: 0 var(--space-3) 0;
-        }
-        .log-line {
-            padding: 1px 0;
-            border-left: 2px solid transparent;
-            padding-left: var(--space-2);
-            transition: border-color var(--transition-fast);
-        }
-        .log-line.info { color: var(--text); }
-        .log-line.success { color: var(--success); border-left-color: var(--success); }
-        .log-line.error { color: var(--danger); border-left-color: var(--danger); }
-        .log-line.warning { color: var(--warning); border-left-color: var(--warning); }
-        .log-line.stage { color: var(--info); border-left-color: var(--info); font-weight: 500; }
-
-        /* ═══════════════════════════════════════════
-           卡片 / 面板（玻璃态增强）
-           ═══════════════════════════════════════════ */
-        .result-card {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: var(--space-5);
-            margin-top: var(--space-4);
-            box-shadow: var(--shadow-card);
-            transition: box-shadow var(--transition-base), border-color var(--transition-base);
-            animation: fadeInUp 0.35s ease-out both;
-        }
-        .result-card:hover {
-            box-shadow: var(--shadow-lg);
-            border-color: var(--border-soft);
-        }
-        .panel {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: var(--space-4);
-            box-shadow: var(--shadow-panel);
-            margin-bottom: var(--space-4);
-            transition: box-shadow var(--transition-base), border-color var(--transition-base);
-            animation: fadeInUp 0.3s ease-out both;
-        }
-        .panel:hover {
-            box-shadow: var(--shadow-card);
-            border-color: var(--border-soft);
-        }
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(12px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* ── 统计徽章 ── */
-        .stat-badge {
-            display: inline-flex; align-items: center; gap: 4px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border-soft);
-            border-radius: var(--radius-sm);
-            padding: 5px 12px; font-size: 12px; color: var(--text-muted);
-            margin-right: 8px; margin-bottom: 6px;
-            font-family: var(--font-sans); font-weight: 500;
-            transition: all var(--transition-fast);
-        }
-        .stat-badge:hover { color: var(--text); border-color: var(--border); }
-
-        /* ═══════════════════════════════════════════
-           按钮系统
-           ═══════════════════════════════════════════ */
-        button[kind="primary"] {
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%) !important;
-            border: none !important;
-            font-weight: 600 !important;
-            letter-spacing: 0.01em;
-            transition: all var(--transition-fast) !important;
-            box-shadow: 0 2px 8px var(--accent-glow) !important;
-        }
-        button[kind="primary"]:hover:not(:disabled) {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 16px var(--accent-glow) !important;
-            filter: brightness(1.08);
-        }
-        button[kind="primary"]:active:not(:disabled) { transform: translateY(0); }
-        button[kind="primary"]:disabled {
-            opacity: 0.5 !important;
-            cursor: not-allowed !important;
-            box-shadow: none !important;
-        }
-
-        /* ── 普通按钮 ── */
-        button:not([kind="primary"]) {
-            transition: all var(--transition-fast) !important;
-            border-radius: var(--radius-md) !important;
-        }
-        button:not([kind="primary"]):hover:not(:disabled) {
-            border-color: var(--accent) !important;
-            color: var(--accent) !important;
-        }
-
-        /* ═══════════════════════════════════════════
-           输入框
-           ═══════════════════════════════════════════ */
-        input[type="text"], textarea, .stTextInput input {
-            background: var(--bg-surface) !important;
-            border: 1px solid var(--border) !important;
-            color: var(--text) !important;
-            border-radius: var(--radius-md) !important;
-            transition: all var(--transition-fast) !important;
-            font-family: var(--font-sans);
-        }
-        .stTextInput > div > div > input:focus,
-        input[type="text"]:focus, textarea:focus {
-            border-color: var(--accent) !important;
-            box-shadow: 0 0 0 3px var(--accent-glow) !important;
-        }
-        .stTextInput > div > div > input::placeholder {
-            color: var(--text-muted) !important; opacity: 0.7;
-        }
-
-        /* ═══════════════════════════════════════════
-           Tab 栏美化
-           ═══════════════════════════════════════════ */
-        [data-testid="stTabs"] {
-            margin-top: var(--space-2);
-        }
-        [data-testid="stTabs"] [role="tablist"] {
-            gap: var(--space-1);
-        }
-        [data-testid="stTabs"] button[role="tab"] {
-            font-family: var(--font-sans);
-            font-weight: 500;
-            font-size: 14px;
-            padding: 8px 20px;
-            border-radius: var(--radius-md) var(--radius-md) 0 0;
-            transition: all var(--transition-fast);
-            border: 1px solid transparent;
-            color: var(--text-muted);
-        }
-        [data-testid="stTabs"] button[role="tab"]:hover {
-            color: var(--text);
-            background: var(--bg-elevated);
-        }
-        [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-            color: var(--accent);
-            border-bottom: 2px solid var(--accent);
-            background: transparent;
-            font-weight: 600;
-        }
-
-        /* ═══════════════════════════════════════════
-           侧栏
-           ═══════════════════════════════════════════ */
-        div[data-testid="stSidebar"] {
-            background-color: var(--bg-base);
-            border-right: 1px solid var(--border-soft);
-        }
-        div[data-testid="stSidebar"] * { color: var(--text); }
-        div[data-testid="stSidebar"] .stSelectbox label,
-        div[data-testid="stSidebar"] .stRadio label {
-            font-weight: 500; font-size: 13px;
-        }
-        div[data-testid="stSidebar"] hr {
-            border-color: var(--border);
-        }
-        div[data-testid="stSidebar"] .stToggle {
-            padding: 4px 0;
-        }
-
-        /* ═══════════════════════════════════════════
-           Expander / 折叠面板
-           ═══════════════════════════════════════════ */
-        .stExpander {
-            border: 1px solid var(--border) !important;
-            border-radius: var(--radius-md) !important;
-            background: var(--bg-surface) !important;
-            margin-bottom: var(--space-3);
-            transition: border-color var(--transition-fast);
-        }
-        .stExpander:hover { border-color: var(--text-muted) !important; }
-        .stExpander > div:first-child {
-            font-weight: 600; font-size: 14px;
-        }
-
-        /* ═══════════════════════════════════════════
-           进度条
-           ═══════════════════════════════════════════ */
-        .stProgress > div > div > div {
-            background: linear-gradient(90deg, var(--accent-dark), var(--accent), var(--info)) !important;
-            border-radius: var(--radius-sm);
-            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .stProgress > div > div {
-            background: var(--bg-elevated) !important;
-            border-radius: var(--radius-sm);
-            height: 8px !important;
-        }
-
-        /* ═══════════════════════════════════════════
-           Metric 指标卡
-           ═══════════════════════════════════════════ */
-        [data-testid="stMetric"] {
-            background: var(--bg-elevated);
-            border: 1px solid var(--border-soft);
-            border-radius: var(--radius-md);
-            padding: var(--space-3);
-            transition: all var(--transition-fast);
-        }
-        [data-testid="stMetric"]:hover {
-            border-color: var(--border);
-            box-shadow: var(--shadow-panel);
-        }
-        [data-testid="stMetric"] label {
-            font-weight: 500 !important;
-            font-size: 12px !important;
-            color: var(--text-muted) !important;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-        [data-testid="stMetricValue"] {
-            font-size: 24px !important;
-            font-weight: 700 !important;
-            font-family: var(--font-heading);
-        }
-
-        /* ═══════════════════════════════════════════
-           Dataframe / 表格
-           ═══════════════════════════════════════════ */
-        .stDataFrame {
-            border: 1px solid var(--border) !important;
-            border-radius: var(--radius-md) !important;
-            overflow: hidden;
-        }
-        .stDataFrame [data-testid="stTable"] th {
-            background: var(--bg-elevated) !important;
-            font-weight: 600 !important;
-            font-size: 12px !important;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-        }
-
-        /* ═══════════════════════════════════════════
-           标题分级
-           ═══════════════════════════════════════════ */
-        .section-title {
-            font-size: 16px; font-weight: 600; color: var(--text);
-            margin-bottom: var(--space-3); font-family: var(--font-sans);
-            display: flex; align-items: center; gap: 6px;
-        }
-        .section-title::after {
-            content: "";
-            flex: 1; height: 1px;
-            background: linear-gradient(90deg, var(--border), transparent);
-            margin-left: var(--space-2);
-        }
-
-        /* ═══════════════════════════════════════════
-           空状态 / 引导
-           ═══════════════════════════════════════════ */
-        .empty-state {
-            text-align: center; padding: var(--space-6) var(--space-4);
-            color: var(--text-muted); font-size: 14px;
-        }
-
-        /* ═══════════════════════════════════════════
-           成功 / 错误 / 警告 / 信息横幅
-           ═══════════════════════════════════════════ */
-        [data-testid="stSuccess"], [data-testid="stError"],
-        [data-testid="stWarning"], [data-testid="stInfo"] {
-            border-radius: var(--radius-md) !important;
-            font-weight: 500;
-        }
-
-        /* ═══════════════════════════════════════════
-           响应式 — 1440+ 宽屏
-           ═══════════════════════════════════════════ */
-        @media (min-width: 1440px) {
-            .result-card { padding: var(--space-6); }
-            .panel { padding: var(--space-5); }
-            .log-container { max-height: 400px; }
-        }
-
-        /* ═══════════════════════════════════════════
-           响应式 — 平板 (≤1024px)
-           ═══════════════════════════════════════════ */
-        @media (max-width: 1024px) {
-            .stage-step .label { font-size: 10px; }
-            .stage-step .dot { width: 18px; height: 18px; font-size: 8px; }
-            .stage-flow { gap: 2px; }
-        }
-
-        /* ═══════════════════════════════════════════
-           响应式 — 小平板 (≤768px)
-           ═══════════════════════════════════════════ */
-        @media (max-width: 768px) {
-            .main-header { font-size: 20px; padding: 8px 0; }
-            .result-card { padding: var(--space-4); }
-            .log-container { max-height: 260px; font-size: 11px; }
-            div[data-testid="stSidebar"] { min-width: 200px !important; }
-            .stage-step .label { font-size: 9px; }
-            .stage-step .dot { width: 16px; height: 16px; font-size: 8px; }
-            .status-pill { font-size: 12px; padding: 3px 12px; }
-            [data-testid="stTabs"] button[role="tab"] { font-size: 12px; padding: 6px 14px; }
-            [data-testid="stMetricValue"] { font-size: 20px !important; }
-        }
-
-        /* ═══════════════════════════════════════════
-           响应式 — 手机 (≤540px)
-           ═══════════════════════════════════════════ */
-        @media (max-width: 540px) {
-            .main-header { font-size: 18px; }
-            .stTextInput > div > div > input { font-size: 14px; padding: 6px 10px; }
-            button { font-size: 13px !important; }
-            .result-card { padding: var(--space-3); }
-            .stat-badge { font-size: 11px; padding: 3px 8px; }
-            .log-container { max-height: 200px; }
-            .stage-flow { flex-wrap: wrap; gap: var(--space-2); }
-            .stage-step { flex: 1 1 auto; min-width: 60px; }
-            .stage-step:not(:last-child)::after { display: none; }
-            .stage-step .label { font-size: 9px; }
-            .stage-step .dot { width: 14px; height: 14px; font-size: 7px; }
-            [data-testid="stMetric"] { padding: var(--space-2); }
-            [data-testid="stMetricValue"] { font-size: 18px !important; }
-            .my-actions .stHorizontalBlock > div { flex: 1 1 100% !important; }
-            [data-testid="stTabs"] button[role="tab"] { font-size: 11px; padding: 5px 10px; }
-        }
-
-        /* ═══════════════════════════════════════════
-           响应式 — 极小屏 (≤375px)
-           ═══════════════════════════════════════════ */
-        @media (max-width: 375px) {
-            .main-header { font-size: 16px; }
-            button { font-size: 12px !important; padding: 4px 8px !important; }
-            .status-pill { font-size: 11px; padding: 2px 10px; }
-        }
-
-        /* ═══════════════════════════════════════════
-           无障碍：尊重用户动效偏好
-           ═══════════════════════════════════════════ */
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-            }
-        }
-    </style>
-    """
-    )
-
-    # 主题 Token：按 session_state.theme 动态选择（暗色默认 / 浅色），取代原 JS 注入
-    theme = st.session_state.get("theme", "dark")
-    _TOKENS_DARK = """
-            /* ── 暗色主题：深蓝灰底 + 暖橙强调 ── */
-            --bg-base: #0A0E14;
-            --bg-surface: #131820;
-            --bg-elevated: #1C2330;
-            --border: #2A3342;
-            --border-soft: #1E2735;
-            --accent: #FF6B35;
-            --accent-dark: #E85D04;
-            --success: #3FB950;
-            --danger: #F85149;
-            --warning: #D29922;
-            --info: #58A6FF;
-            --text: #E6EDF3;
-            --text-muted: #7D8799;
-            --accent-glow: rgba(255,107,53,0.28);
-            --shadow-card: 0 1px 3px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.25);
-            --shadow-panel: 0 1px 2px rgba(0,0,0,0.4);
-            --shadow-lg: 0 4px 8px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.3);
-            --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
-            --space-4: 16px; --space-5: 24px; --space-6: 32px;
-            --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
-            --font-heading: 'Newsreader', 'PingFang SC', 'Microsoft YaHei', 'Noto Serif SC', serif;
-            --font-sans: 'Roboto', -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
-            --font-mono: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
-    """
-    _TOKENS_LIGHT = """
-            /* ── 浅色主题：暖白底 + 深橙强调 ── */
-            --bg-base: #F8F9FB;
-            --bg-surface: #FFFFFF;
-            --bg-elevated: #EDF0F5;
-            --border: #D1D5DC;
-            --border-soft: #E2E6ED;
-            --accent: #E0561C;
-            --accent-dark: #C24A12;
-            --success: #1A7F37;
-            --danger: #CF222E;
-            --warning: #9A6700;
-            --info: #0969DA;
-            --text: #1A1D23;
-            --text-muted: #5C6270;
-            --accent-glow: rgba(224,86,28,0.16);
-            --shadow-card: 0 1px 3px rgba(26,29,35,0.08), 0 4px 14px rgba(26,29,35,0.06);
-            --shadow-panel: 0 1px 2px rgba(26,29,35,0.06);
-            --shadow-lg: 0 4px 8px rgba(26,29,35,0.10), 0 8px 24px rgba(26,29,35,0.08);
-            --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
-            --space-4: 16px; --space-5: 24px; --space-6: 32px;
-            --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px;
-            --font-heading: 'Newsreader', 'PingFang SC', 'Microsoft YaHei', 'Noto Serif SC', serif;
-            --font-sans: 'Roboto', -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
-            --font-mono: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
-    """
-    _tokens = _TOKENS_LIGHT if theme == "light" else _TOKENS_DARK
-    st.markdown(_css.replace("/*THEME_TOKENS*/", _tokens), unsafe_allow_html=True)
-
-    # ── 主题切换控件：注入一次，仅改 <html data-theme> 属性 ──
-    #    不改动 Streamlit 管理节点，避免闪烁；状态持久化到 localStorage。
-    _theme_toggle = """
-    <script>
-    (function() {
-      const root = document.documentElement;
-      const saved = localStorage.getItem('engine_theme') || 'dark';
-      root.setAttribute('data-theme', saved);
-      function ensure() {
-        if (!document.getElementById('theme-switch')) {
-          const box = document.querySelector('[data-testid="stSidebarNav"]') || document.querySelector('[data-testid="stSidebar"]');
-          if (!box) return;
-          const wrap = document.createElement('div');
-          wrap.id = 'theme-switch';
-          wrap.style.cssText = 'padding:10px 12px;margin-top:8px;';
-          const btn = document.createElement('button');
-          btn.textContent = (root.getAttribute('data-theme') === 'light') ? '🌙 暗色' : '☀️ 浅色';
-          btn.style.cssText = 'width:100%;padding:7px 10px;border-radius:8px;border:1px solid #8884;background:#8882;color:inherit;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s ease;';
-          btn.onmouseenter = function() { btn.style.background = '#8883'; };
-          btn.onmouseleave = function() { btn.style.background = '#8882'; };
-          btn.onclick = function() {
-            const next = (root.getAttribute('data-theme') === 'light') ? 'dark' : 'light';
-            root.setAttribute('data-theme', next);
-            localStorage.setItem('engine_theme', next);
-            btn.textContent = (next === 'light') ? '🌙 暗色' : '☀️ 浅色';
-          };
-          wrap.appendChild(btn);
-          box.insertBefore(wrap, box.firstChild);
-        }
-      }
-      ensure();
-      const obs = new MutationObserver(ensure);
-      obs.observe(document.body, {childList: true, subtree: true});
-    })();
-    </script>
-    """
-
+# CSS 已提取到 ui/styles.css（P1-1），theme tokens → ui/theme_tokens.py
+from ui.styles import _inject_css
+from ui import log_sink
 
 _inject_css()
+
 
 # ============================================================
 # Session State 初始化
@@ -767,7 +137,16 @@ _PROGRESS_MAP = {
     "download_start": 0.05,       # 下载阶段起点锚
     "transcribe_start": 0.18,
     "transcribe_done": 0.28,
-    "images_start": 0.58,         # 配图阶段起点锚（原 research_write_start，命名纠正）
+    # 研究-写作阶段（对接 write_stage.py 进度语义）
+    "research_start": 0.30,       # 初始搜索启动
+    "research_search_done": 0.34,  # 初始搜索完成（对齐 research.py）
+    "research_write_start": 0.35,  # 写作循环启动
+    "research_iter_base": 0.35,    # 迭代进度基准（V2: +0.03/轮，CP: +0.04/轮）
+    "research_eval_start": 0.45,   # 评估/Compose 阶段
+    "research_humanize": 0.48,     # 人工化改写
+    "research_humanize_done": 0.55,  # 改写完成
+    "research_done": 0.57,         # 研究-写作完成
+    "images_start": 0.58,         # 配图阶段起点锚
     "images_skipped": 0.65,
     "images_cover_done": 0.62,
     "images_all_done": 0.67,
@@ -783,82 +162,37 @@ if not st.session_state.log_file_path:
     _log_filename = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     st.session_state.log_file_path = str(_log_dir / _log_filename)
 
-# ── stderr 镜像到日志文件：让「日志文件 = CMD 窗口」完整一致 ──
-#    各阶段里大量诊断日志（[download]/[node-env]/[yt-dlp] 等）直接用
-#    sys.stderr.write 输出到 CMD 窗口，但原本没进日志文件，导致日志遗漏。
-#    包装 sys.stderr 为 Tee：所有 stderr 同时落盘；其中 add_log 的
-#    时间戳行已由 add_log 通道3 带 [LEVEL] 写入文件，这里跳过以免重复。
-class _TeeStderr:
-    _lock = threading.Lock()
-    def __init__(self, orig, log_path):
-        self._orig = orig
-        self._log_path = log_path
-    def set_log_path(self, p):
-        with self._lock:
-            self._log_path = p
-    @staticmethod
-    def _is_addlog_line(data: str) -> bool:
-        # add_log 通道1 格式： [HH:MM:SS] msg
-        s = data.lstrip()
-        return (s.startswith("[") and len(s) >= 9
-                and s[1:3].isdigit() and s[3] == ":" and s[6] == ":")
-    def write(self, data):
-        try:
-            self._orig.write(data)
-        except Exception:
-            pass
-        if self._is_addlog_line(data):
-            return  # 已由 add_log 通道3 带 LEVEL 写入文件，避免重复
-        with self._lock:
-            lp = self._log_path
-        if lp:
-            try:
-                with open(lp, "a", encoding="utf-8") as f:
-                    f.write(data)
-                    f.flush()
-            except Exception:
-                pass
-    def flush(self):
-        try:
-            self._orig.flush()
-        except Exception:
-            pass
+# 安装 stderr → 日志文件 Tee（只安装一次，避免 Streamlit 多次 rerun 重复包装）
+log_sink.install(st.session_state.log_file_path)
 
-if isinstance(sys.stderr, _TeeStderr):
-    sys.stderr.set_log_path(st.session_state.log_file_path)
-else:
-    sys.stderr = _TeeStderr(sys.stderr, st.session_state.log_file_path)
 
 
 # ============================================================
 # 辅助函数
 # ============================================================
 def add_log(msg: str, level: str = "info"):
-    """添加日志条目，自动裁剪到 500 行。
-    三通道输出：stderr（CMD 窗口） + session_state（Web UI） + 日志文件（持久化）。"""
-    now = datetime.now()
-    time_short = now.strftime("%H:%M:%S")
-    time_full = now.strftime("%Y-%m-%d %H:%M:%S")
-    # 通道 1：stderr → CMD 窗口始终可见（诊断兜底）
-    sys.stderr.write(f"[{time_short}] {msg}\n")
-    sys.stderr.flush()
-    # 通道 2：session_state → Web UI 实时日志
-    entry = {"time": time_short, "msg": msg, "level": level}
+    """添加日志条目（线程安全）：stderr + UI 状态缓存 + 日志文件。"""
+    log_sink.add_log(msg, level)
+
+
+def _sync_ui_state_to_session():
+    """把 ui.log_sink 的快照同步到 st.session_state（主线程/fragment 专用）。"""
     try:
-        st.session_state.logs.append(entry)
-        if len(st.session_state.logs) > 500:
-            st.session_state.logs = st.session_state.logs[-500:]
+        snap = log_sink.snapshot()
+        st.session_state.is_running = snap["is_running"]
+        st.session_state.pipeline_done = snap["pipeline_done"]
+        st.session_state.pipeline_error = snap["pipeline_error"]
+        st.session_state.result_data = snap["result_data"]
+        st.session_state.run_id = snap["run_id"]
+        st.session_state.current_stage = snap["current_stage"]
+        st.session_state.stage_status = snap["stage_status"]
+        log_sink.set_progress(snap["progress_pct"])
+        st.session_state.logs = snap["logs"]
+        st.session_state.elapsed_seconds = snap["elapsed_seconds"]
+        st.session_state.awaiting_next = snap.get("awaiting_next", False)
     except Exception:
-        pass  # session_state 不可用时静默忽略
-    # 通道 3：日志文件 → 本地持久化（同步写入，确保不丢失）
-    try:
-        _log_path = st.session_state.get("log_file_path", "")
-        if _log_path:
-            with open(_log_path, "a", encoding="utf-8") as _f:
-                _f.write(f"[{time_full}] [{level.upper()}] {msg}\n")
-                _f.flush()
-    except Exception:
-        pass  # 文件写入失败不影响主流程
+        pass
+
 
 
 def _estimate_transcribe_time(video_path: str):
@@ -882,20 +216,24 @@ def _estimate_transcribe_time(video_path: str):
 
 
 def set_stage(name: str, status: str):
-    """更新阶段状态。"""
-    st.session_state.stage_status[name] = status
-    st.session_state.current_stage = name
+    """更新阶段状态（线程安全）。"""
+    log_sink.set_stage(name, status)
+
+
+
+# ── Emoji 映射常量（模块级，避免每次 add_log 重建字典）──
+_EMOJI_MAP = {"info": "📝", "success": "✅", "error": "❌", "warning": "⚠️", "stage": "🔷"}
 
 
 def _emoji_for_level(level: str) -> str:
-    return {"info": "📝", "success": "✅", "error": "❌", "warning": "⚠️", "stage": "🔷"}.get(
-        level, "📝"
-    )
+    return _EMOJI_MAP.get(level, "📝")
 
 
+# ── 日志轮转常量（10MB × 最多 3 个备份）──
 # ============================================================
 # PipelineState（轻量版，Streamlit 用）
 # ============================================================
+
 class PipelineState:
     """流水线状态管理，支持断点续跑。"""
 
@@ -960,6 +298,8 @@ class PipelineState:
         sf = OUTPUTS_DIR / date_str / run_id / "pipeline_state.json"
         if sf.exists():
             data = json.loads(sf.read_text(encoding="utf-8"))
+            # 向后兼容：旧版 state JSON 可能缺少 with_images 字段（2026-07-11 前生成）
+            data.setdefault("with_images", False)
             return cls(**data)
         return None
 
@@ -1071,7 +411,7 @@ def _ensure_node_env() -> bool:
                    capture_output=True, check=True, timeout=120)
             _sys.stderr.write("[node-env] npm install 完成\n"); _sys.stderr.flush()
         except sp.CalledProcessError as e:
-            add_log(f"npm install 失败: {e.stderr.decode()[:300] if e.stderr else '未知错误'}", "warning")
+            add_log(f"npm install 失败: {e.stderr.decode(errors='replace')[:300] if e.stderr else '未知错误'}", "warning")
         except FileNotFoundError:
             add_log("npm 未找到（Node.js 可能安装不完整）", "warning")
             return False
@@ -1096,12 +436,93 @@ def _ensure_node_env() -> bool:
     return _DOWNLOAD_SCRIPT.exists() and node_modules.exists()
 
 
+def _kill_process_tree(pid: int) -> None:
+    """Windows 下强制结束进程及其子进程。"""
+    import subprocess as sp
+    try:
+        sp.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            timeout=15,
+        )
+    except Exception:
+        pass
+
+
+def _run_subprocess_with_timeout(
+    cmd: List[str],
+    cwd: Path,
+    timeout: int = 300,
+    log_prefix: str = "",
+) -> tuple[int, str, str]:
+    """运行子进程，带超时与进程树清理。
+
+    实时把 stdout/stderr 输出到 add_log，避免 capture_output 在 Windows 上
+    因孙进程（如 Chromium）未退出而永久阻塞。
+    返回 (returncode, stdout_text, stderr_text)。
+    """
+    import subprocess as sp
+    import threading as _threading
+
+    proc = sp.Popen(
+        cmd,
+        cwd=str(cwd),
+        stdout=sp.PIPE,
+        stderr=sp.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=sp.CREATE_NEW_PROCESS_GROUP,
+    )
+
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+
+    def _reader(stream, buf: List[str], level: str):
+        try:
+            for line in stream:
+                txt = line.rstrip("\n")
+                if txt:
+                    buf.append(txt)
+                    add_log(f"{log_prefix}{txt}", level)
+        except Exception:
+            pass
+
+    t_out = _threading.Thread(target=_reader, args=(proc.stdout, stdout_lines, "info"))
+    t_err = _threading.Thread(target=_reader, args=(proc.stderr, stderr_lines, "warning"))
+    t_out.start()
+    t_err.start()
+
+    rc = -1
+    try:
+        rc = proc.wait(timeout=timeout)
+    except sp.TimeoutExpired:
+        add_log(f"{log_prefix}子进程超时（>{timeout}秒），强制终止", "warning")
+        _kill_process_tree(proc.pid)
+        try:
+            rc = proc.wait(timeout=5)
+        except Exception:
+            rc = -1
+    finally:
+        # 主动关闭管道，解除 reader 线程阻塞
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            proc.stderr.close()
+        except Exception:
+            pass
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
+
+    return rc, "\n".join(stdout_lines), "\n".join(stderr_lines)
+
+
 def _download_via_node(state: PipelineState) -> Optional[Dict[str, Any]]:
     """使用 Node.js Playwright 脚本下载视频（全自动，无需 cookies）。
     返回 {'video_files': [...], 'title': '...', 'description': '...'} 或 None。
     """
-    import subprocess as sp
-
     state.run_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "node", str(_DOWNLOAD_SCRIPT),
@@ -1113,24 +534,16 @@ def _download_via_node(state: PipelineState) -> Optional[Dict[str, Any]]:
     ]
 
     add_log("🌐 Playwright 浏览器自动抓取中...", "info")
-    add_log(f"  自动打开页面拦截视频流，无需 cookies", "info")
+    add_log("  自动打开页面拦截视频流，无需 cookies", "info")
 
     try:
-        result = sp.run(
-            cmd,
-            cwd=str(_VIDEO_DL_DIR),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
+        rc, stdout, stderr = _run_subprocess_with_timeout(
+            cmd, cwd=_VIDEO_DL_DIR, timeout=300, log_prefix="[node] "
         )
-        stdout = result.stdout or ""
-        if result.returncode != 0:
-            stderr = (result.stderr or "")[:500]
-            add_log(f"Node.js 下载返回非零: {result.returncode}", "warning")
+        if rc != 0:
+            add_log(f"Node.js 下载返回非零: {rc}", "warning")
             if stderr:
-                add_log(f"  stderr: {stderr}", "warning")
+                add_log(f"  stderr: {stderr[:500]}", "warning")
             return None
 
         # 从 stdout JSON 中提取元数据
@@ -1175,15 +588,13 @@ def _download_via_node(state: PipelineState) -> Optional[Dict[str, Any]]:
         add_log("Node.js 下载完成但未找到视频文件", "warning")
         return None
 
-    except sp.TimeoutExpired:
-        add_log("Node.js 下载超时（>5分钟）", "warning")
-        return None
     except FileNotFoundError:
         add_log("Node.js 不可用", "warning")
         return None
     except Exception as e:
         add_log(f"Node.js 下载异常: {e}", "warning")
         return None
+
 
 
 def _download_via_ytdlp(state: PipelineState, temp_dir: Path) -> Optional[Dict[str, Any]]:
@@ -1210,8 +621,9 @@ def _download_via_ytdlp(state: PipelineState, temp_dir: Path) -> Optional[Dict[s
             except ValueError:
                 p = 0
             # 下载进度区间：download_start → transcribe_start（基于常量跨度，消除魔法数字）
-            st.session_state.progress_pct = (
+            log_sink.set_progress(
                 _PROGRESS_MAP["download_start"]
+
                 + p * (_PROGRESS_MAP["transcribe_start"] - _PROGRESS_MAP["download_start"])
             )
 
@@ -1240,10 +652,14 @@ def _download_via_ytdlp(state: PipelineState, temp_dir: Path) -> Optional[Dict[s
             add_log(f"🍪 使用 Cookie 文件: {cookie_file}", "info")
             _sys.stderr.write(f"[yt-dlp] cookiefile={cookie_file}\n"); _sys.stderr.flush()
         else:
-            # 无 cookie 时尝试 Chrome 自动检测
-            _sys.stderr.write("[yt-dlp] 尝试 cookiesfrombrowser=chrome\n"); _sys.stderr.flush()
-            ydl_opts["cookiesfrombrowser"] = ("chrome",)
-            add_log("🍪 尝试从 Chrome 浏览器自动提取 Cookies", "info")
+            # 无 cookie 配置时，仅在用户明确开启「浏览器 Cookie」开关时自动提取
+            _allow_cookies = st.session_state.get("use_browser_cookies", False)
+            if _allow_cookies:
+                _sys.stderr.write("[yt-dlp] 尝试 cookiesfrombrowser=chrome\n"); _sys.stderr.flush()
+                ydl_opts["cookiesfrombrowser"] = ("chrome",)
+                add_log("🍪 尝试从 Chrome 浏览器自动提取 Cookies（用户已授权）", "info")
+            else:
+                add_log("🔒 跳过 Cookie 提取（可在侧边栏开启「浏览器 Cookie」开关）", "info")
 
     try:
         _sys.stderr.write("[yt-dlp] extract_info 开始...\n"); _sys.stderr.flush()
@@ -1392,7 +808,7 @@ def step_transcribe(state: PipelineState) -> bool:
     MODEL_MAP = {"tiny": "openai/whisper-tiny", "small": "openai/whisper-small",
                  "base": "openai/whisper-base", "medium": "openai/whisper-medium"}
 
-    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_start"]
+    log_sink.set_progress(_PROGRESS_MAP["transcribe_start"])
 
     # ── SenseVoice 转录（中文最优，唯一后端） ──
     _sys.stderr.write("[transcribe] 使用 SenseVoice 后端\n"); _sys.stderr.flush()
@@ -1492,7 +908,7 @@ def _transcribe_transformers(video_path, backend, model, model_map, state):
     add_log(f"转录完成 ({len(text)} 字符)", "success")
     set_stage("转录", "done")
     state.mark_done("transcribe")
-    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_done"]
+    log_sink.set_progress(_PROGRESS_MAP["transcribe_done"])
     return True
 
 
@@ -1562,7 +978,7 @@ def _transcribe_sensevoice(video_path, state):
     add_log(f"转录完成 ({len(text)} 字符)", "success")
     set_stage("转录", "done")
     state.mark_done("transcribe")
-    st.session_state.progress_pct = _PROGRESS_MAP["transcribe_done"]
+    log_sink.set_progress(_PROGRESS_MAP["transcribe_done"])
     return True
 
 
@@ -1698,54 +1114,144 @@ def _generate_agnes_image(prompt: str, output_path: Path,
 # 配图 Prompt 生成（LLM 驱动，DeepSeek / Pollinations flux 优化）
 # ============================================================
 
-# 系统指令：专为 Agnes/ERNIE 中文模型优化（写实纪录片/新闻摄影风格，避免插画/3D 渲染）
+# 系统指令：段落锚定式配图（封面全局抽象 + 内文严格按段落对应）
 _IMAGE_PROMPT_SYSTEM = """你是一个专业的AI配图提示词工程师，专为中文图像生成模型优化。
 
-核心原则：
-- 用中文写提示词（模型底层是中文语义理解，英文反而降低质量）。
-- 军事内容要具体到真实装备、地点、事件，不能用"军事装备"这种泛词。
-- 地图/地缘政治场景用"卫星地图插图"风格，并点名真实地区（如东亚、日本、中国沿海）。
-- 风格：真实照片、纪录片摄影、新闻摄影、阅兵场实拍。避免"电影/3D渲染/概念艺术/cinematic"等让模型偏插画的词。
-- 构图：主体放在上方85%区域，底部15%留空（后续裁剪用）。
-- 硬性禁止：无文字、无字母、无水印、无Logo、无座舱特写。
+## 封面-内文层级分工（核心纪律）
+
+### COVER（封面图）
+- 职责：描绘文章**全局抽象主题**的象征性画面。封面是"海报"，不是"剧照"。
+- 主题来源：文章标题 + 全文概要（非任何具体段落）。
+- 禁止：不得直接描绘任一段落的专属战斗场景或具体事件瞬间。
+- 正确示例：文章讲"无人机撕破三层防线"，封面可画"阴云密布的战场上，廉价无人机群如蜂群涌向装甲车队"的全景——而非某一段的"油罐车爆炸"特写。
+
+### INLINE_i（内文配图，i=1,2,3...）
+- 职责：**严格对应第 i 个文章段落**的专属画面。读取 USER prompt 中标注的 `INLINE_i 对应段落`，只描绘该段内容。
+- 禁止跨段引用：INLINE_1 不能画 INLINE_3 的场景，反之亦然。
+- 抽象段落转化：若段落是分析/论述（如"制裁"），转化为视觉意象（如"集装箱港口冷清的航拍"）。
+
+## 风格与美学
+- 风格：真实照片、纪录片摄影、新闻摄影、战地摄影。避免"电影/3D渲染/概念艺术/cinematic"。
+- 军事内容必须具体到真实装备、地点、事件，禁用"军事装备"等泛词。
+- 光线：优先自然光、黄金时段光、阴天漫射光；夜战用微光夜视风格。
+- 构图：单张完整统一构图，主体占据画面核心区域。底部空白为自然地面/海面/天空延伸。
+
+## 硬性禁止
+- 无文字、无字母、无水印、无Logo、无座舱特写。
+- 单张完整照片，画面统一不可分割。禁止拼接与分割式构图。
+- 禁止血腥/残肢/尸体特写。禁止真实可辨识个人面孔（用剪影/背影替代）。
+- 禁止旗帜、徽章、宗教符号特写。
 - 每条提示词不超过300字。纯中文，无解释、无markdown。"""
 
-# 用户指令模板
+# 用户指令模板：段落锚定式（每张 INLINE 绑定对应段落原文）
 _IMAGE_PROMPT_USER = """文章标题：{title}
-文章内容（节选）：{content}
 
-为这篇军事新闻文章生成配图提示词：
-- 1 条封面提示词：文章核心主题最震撼的视觉画面。
-- {inline_count} 条内文提示词：不同角度的辅助场景（如地缘地图视角、装备/编队视角）。
+全文概要（仅 COVER 参考，INLINE_i 不得使用）：{section_summary}
 
-严格按以下格式返回（每行一条，不要多余文字）：
+---
+以下为段落→配图映射，每条 INLINE 严格对应所标注段落：
+---
+
+INLINE_1 对应段落：
+{s1}
+
+INLINE_2 对应段落：
+{s2}
+
+INLINE_3 对应段落：
+{s3}
+
+---
+配图生成任务（1 封面 + 3 内文）：
+
+## COVER
+基于「标题」+「全文概要」输出一个全局抽象视觉意象（象征性构图、远景/氛围/地缘版图类画面），不得描绘任一段落的专属场景。
+
+## INLINE_1 / INLINE_2 / INLINE_3
+每条只基于上方标注的对应段落创作，提取该段核心场景/主体/情绪 → 转化为新闻摄影/战地摄影风格画面。禁止跨段引用。
+
+## 格式（纯中文，每行一条，不超300字，不加解释）
 COVER: <提示词>
 INLINE_1: <提示词>
 INLINE_2: <提示词>
+INLINE_3: <提示词>"""
 
-每条提示词：纯中文，不超过300字，无文字/水印/Logo，主体在上方85%区域。"""
+
+def _segment_article(content: str, n: int = 3) -> list:
+    """将文章按自然段均分为 n 段（用于段落锚定配图）。
+
+    预处理：按 \\n\\n 拆自然段 → 过滤标题/图片标记/引用块/空行 → 贪心均分。
+    返回长度为 n 的字符串列表，每段约 total_chars/n 字。
+    """
+    raw = [p.strip() for p in content.split("\n\n") if p.strip()]
+    body = [p for p in raw
+            if not p.startswith("#") and not p.startswith("![") and not p.startswith(">")]
+    if not body:
+        return [content[:300]] * n  # 无可分段内容，全文复制为每段
+
+    total = sum(len(p) for p in body)
+    ideal = max(1, total // n)
+
+    segments = []
+    idx = 0
+    for i in range(n):
+        parts = []
+        chars = 0
+        limit = ideal if i < n - 1 else 10 ** 9  # 最后一段吃剩余
+        while idx < len(body) and chars < limit:
+            parts.append(body[idx])
+            chars += len(body[idx])
+            idx += 1
+        txt = "\n\n".join(parts)
+        segments.append(txt if txt else content[:300])
+
+    return segments
+
+
+def _build_section_summary(title: str, segments: list) -> str:
+    """从标题 + 各段首句构建全文概要（仅 COVER 参考，~150 字）。"""
+    parts = []
+    for seg in segments:
+        s = seg.split("。")[0].strip()
+        if s and len(s) > 2:
+            parts.append(s[:60])
+    body = "。".join(parts[:2]) if parts else title
+    return f"{title}。{body}。"[:250]
 
 
 def _generate_image_prompts_via_llm(title: str, content: str, count: int = 2) -> dict:
-    """调用 DeepSeek LLM 生成配图 prompt（封面 + 内文）。
+    """段落锚定式配图 prompt 生成（封面 + 内文）。
+
+    将文章分段 → USER prompt 显式标注 INLINE_i 对应段落原文 → LLM 逐段配图。
+    签名不变 (title, content, count)，对调用方完全透明。
 
     返回 {'cover': str|None, 'inline': [str,...]}。
-    任何异常（无 Key / 超时 / 解析失败）都向上抛出，由调用方 fallback 到硬编码模板。
+    任何异常向上抛出，由调用方 fallback。
     """
     from ai_writer import AIWriter
 
     inline_count = max(1, count)
-    user_prompt = _IMAGE_PROMPT_USER.format(
-        title=title[:80],
-        content=content[:1500].replace("\n", " "),
-        inline_count=inline_count,
-    )
+    segments = _segment_article(content, n=inline_count)
+    # 补齐到 inline_count（极短文章可能不足）
+    while len(segments) < inline_count:
+        segments.append(content[:300])
+    summary = _build_section_summary(title, segments)
+
+    # 组装分段锚定式 user prompt
+    fmt = {"title": title[:100], "section_summary": summary}
+    for i in range(inline_count):
+        fmt[f"s{i+1}"] = segments[i][:600]
+    # 补齐 s1/s2/s3 占位符（模板要求 3 个）
+    for i in range(inline_count, 3):
+        fmt[f"s{i+1}"] = "（无额外段落）"
+
+    user_prompt = _IMAGE_PROMPT_USER.format(**fmt)
 
     writer = AIWriter()
     raw = writer._call_ai(
         user_prompt,
         system_prompt=_IMAGE_PROMPT_SYSTEM,
-        max_tokens=800,
+        max_tokens=1000,
         temperature=0.7,
     )
 
@@ -1799,7 +1305,8 @@ def _build_inline_prompts(title: str, content: str, count: int = 2) -> list:
     for i in range(min(count, len(themes))):
         p = (f"真实新闻摄影风格：{themes[i][0]}。"
              f"文章主题：{keywords[:80]}。"
-             f"高细节，锐利对焦，自然光线，无文字，无水印")
+             f"高细节，锐利对焦，自然光线，无文字，无水印。"
+             f"单张完整照片，无分割构图，无多图拼接")
         prompts.append(p[:300])
 
     return prompts
@@ -1827,7 +1334,7 @@ def step_images(state: PipelineState) -> bool:
         set_stage("配图", "done")
         state.mark_done("generate_images")
         state.outputs["images_injected"] = False
-        st.session_state.progress_pct = _PROGRESS_MAP["images_skipped"]
+        log_sink.set_progress(_PROGRESS_MAP["images_skipped"])
         return True
 
     # 检查 Agnes API Key
@@ -1838,7 +1345,7 @@ def step_images(state: PipelineState) -> bool:
         set_stage("配图", "done")
         state.mark_done("generate_images")
         state.outputs["images_injected"] = False
-        st.session_state.progress_pct = _PROGRESS_MAP["images_skipped"]
+        log_sink.set_progress(_PROGRESS_MAP["images_skipped"])
         return True
 
     _sys.stderr.write("[images] step_images 开始（Agnes Image 2.0 Flash）\n"); _sys.stderr.flush()
@@ -1862,7 +1369,7 @@ def step_images(state: PipelineState) -> bool:
 
     images_dir = state.run_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-    st.session_state.progress_pct = _PROGRESS_MAP["images_start"]
+    log_sink.set_progress(_PROGRESS_MAP["images_start"])
 
     cover_path = None
     inline_paths = []
@@ -1897,7 +1404,7 @@ def step_images(state: PipelineState) -> bool:
         else:
             add_log("封面图生成失败（Agnes 无响应或超时）", "warning")
 
-        st.session_state.progress_pct = _PROGRESS_MAP["images_cover_done"]
+        log_sink.set_progress(_PROGRESS_MAP["images_cover_done"])
 
         # ── 2. 生成内文配图 ──
         inline_prompts = llm_inline if llm_inline else _build_inline_prompts(title, content, count=INLINE_IMAGE_COUNT)
@@ -1916,7 +1423,7 @@ def step_images(state: PipelineState) -> bool:
             else:
                 add_log(f"内文配图 {idx+1} 生成失败", "warning")
 
-        st.session_state.progress_pct = _PROGRESS_MAP["images_all_done"]
+        log_sink.set_progress(_PROGRESS_MAP["images_all_done"])
 
         # ── 3. 汇总结果 ──
         success_count = len(inline_paths)
@@ -1949,7 +1456,7 @@ def step_images(state: PipelineState) -> bool:
     state.outputs["images_injected"] = images_generated
     set_stage("配图", "done")
     state.mark_done("generate_images")
-    st.session_state.progress_pct = _PROGRESS_MAP["assembly_start"]
+    log_sink.set_progress(_PROGRESS_MAP["assembly_start"])
 
     if not images_generated:
         add_log("⚠️ 本篇文章无配图，最终稿件将为纯文本版", "warning")
@@ -1985,29 +1492,6 @@ def _assemble_article_with_images(state, cover_path: Optional[str], inline_paths
         state.outputs["assembled_file"] = str(article_path)
         return False
 
-    # ── 注入封面图（极简，无说明文字）──
-    if cover_path:
-        cover_file = Path(cover_path)
-        if cover_file.exists():
-            cover_rel = f"images/{cover_file.name}"
-            lines = content.split("\n")
-            insert_idx = 0
-            for i, line in enumerate(lines):
-                if line.startswith("# "):
-                    insert_idx = i + 1
-                    while insert_idx < len(lines) and lines[insert_idx].strip() == "":
-                        insert_idx += 1
-                    break
-            if insert_idx > 0:
-                # 标题后插入封面图，并保留与正文之间的空行
-                lines.insert(insert_idx, f"![封面]({cover_rel})")
-                lines.insert(insert_idx + 1, "")
-                content = "\n".join(lines)
-        else:
-            import sys as _sys
-            _sys.stderr.write(f"[assemble] 封面图文件缺失，跳过注入: {cover_file.name}\n"); _sys.stderr.flush()
-            add_log(f"封面图文件缺失: {cover_file.name}，跳过注入", "warning")
-
     # ── 注入内文配图（极简，无 "📸 配图X" 标签）──
     if inline_paths:
         # 过滤掉不存在的图片
@@ -2040,6 +1524,56 @@ def _assemble_article_with_images(state, cover_path: Optional[str], inline_paths
                     paragraphs[pos] = img_md.strip() + "\n\n" + paragraphs[pos]
             content = "\n\n".join(paragraphs)
 
+    # ── 注入封面图（极简，置于开头钩子段落后）──
+    if cover_path:
+        cover_file = Path(cover_path)
+        if cover_file.exists():
+            cover_rel = f"images/{cover_file.name}"
+            # 找到第一个自然段落结束位置（跳过标题 # 行）
+            _lines = content.split("\n")
+            _hook_end = 0
+            _found_body = False
+            for _i, _ln in enumerate(_lines):
+                stripped = _ln.strip()
+                if not _found_body:
+                    if stripped and not stripped.startswith("# ") and not stripped.startswith("!["):
+                        _found_body = True
+                        _hook_end = _i
+                    continue
+                # 在正文中找段落结束（空行或 EOF）
+                if not stripped:
+                    _hook_end = _i
+                    break
+                _hook_end = _i
+            # 在钩子段落之后、后续内容之前插入封面图
+            # （_hook_end=0 且 _found_body=False：无钩子段落时封面置于标题后）
+            _before = "\n".join(_lines[:_hook_end + 1])
+            _after = "\n".join(_lines[_hook_end + 1:])
+            content = _before.rstrip() + f"\n\n![封面]({cover_rel})\n\n" + _after.lstrip()
+        else:
+            import sys as _sys
+            _sys.stderr.write(f"[assemble] 封面图文件缺失，跳过注入: {cover_file.name}\n"); _sys.stderr.flush()
+            add_log(f"封面图文件缺失: {cover_file.name}，跳过注入", "warning")
+
+    # ── 规整：剥离流水线元数据 + 只保留首个 # 文章标题 ──
+    # (a) 剥离末尾 "---" 分隔 + "*第N轮 | 评分…*" 元数据块
+    content = re.sub(r"\n*---\n*\*[^*\n]*\*", "", content)
+    # (b) 只保留首个 # 文章标题（"# "，非 "## "章节）
+    _lines = content.split("\n")
+    _first_title = False
+    _kept = []
+    for _ln in _lines:
+        if _ln.startswith("# "):
+            if _first_title:
+                continue
+            _first_title = True
+        _kept.append(_ln)
+    content = "\n".join(_kept).strip()
+    # (c) 剥离 LLM 在 S3 自发产生的整行话题标签（形如 "#无人机战争 #AI改变战场"，# 后无空格）
+    content = re.sub(r"(?m)^\s*#\S+(?:\s+#\S+)*\s*$", "", content)
+    # (d) 清理因删除标签行产生的连续空行（≥3 换行压成 2 个）
+    content = re.sub(r"\n{3,}", "\n\n", content)
+
     # ── 写回：只在阶段5 生成「完整稿件_配图版.md」──
     assembled_file = state.run_dir / "完整稿件_配图版.md"
     assembled_file.write_text(content, encoding="utf-8")
@@ -2056,7 +1590,7 @@ def step_assemble(state: PipelineState) -> bool:
     set_stage("组装", "running")
     add_log("阶段5/5: 图文最终组装", "stage")
 
-    st.session_state.progress_pct = _PROGRESS_MAP["assembly_done"]
+    log_sink.set_progress(_PROGRESS_MAP["assembly_done"])
 
     # ── 阶段5 真正执行图文组装：阶段4 只出图，不提前生成配图版 ──
     cover_image = state.outputs.get("cover_image", "")
@@ -2087,7 +1621,7 @@ def step_assemble(state: PipelineState) -> bool:
 
     set_stage("组装", "done")
     state.mark_done("assemble")
-    st.session_state.progress_pct = _PROGRESS_MAP["pipeline_complete"]
+    log_sink.set_progress(_PROGRESS_MAP["pipeline_complete"])
     return True
 
 
@@ -2146,10 +1680,11 @@ def _run_stages(stages: list, state, stop_at: str = "全部") -> bool:
                 remaining = any(not state.is_done(s[0]) for s in stages)
                 if remaining:
                     add_log(f"⏸️ 阶段 [{stage_name}] 完成，等待用户点击 [下一步] 继续…", "info")
-                    st.session_state.awaiting_next = True
-                    st.session_state.stage_event.wait()  # 阻塞至用户点击
-                    st.session_state.awaiting_next = False
-                    st.session_state.stage_event.clear()
+                    log_sink.UI_SYNC.update(awaiting_next=True)
+                    _STAGE_EVENT.wait()  # 阻塞至用户点击
+                    log_sink.UI_SYNC.update(awaiting_next=False)
+                    _STAGE_EVENT.clear()
+
         except Exception as e:
             add_log(f"阶段 {stage_name} 异常: {e}", "error")
             traceback.print_exc()
@@ -2171,7 +1706,7 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
     import sys as _sys
 
     t_start = time.time()
-    st.session_state.pipeline_error = None
+    error: Optional[str] = None
 
     try:
         # 始终从零开始新建运行状态（不复用历史记录）
@@ -2181,8 +1716,7 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
             with_images=with_images,
         )
 
-        st.session_state.pipeline_state = state
-        st.session_state.run_id = state.run_id
+        log_sink.set_pipeline_started(state.run_id)
         add_log(f"运行 ID: {state.run_id}", "info")
         add_log(f"输出目录: {state.run_dir}", "info")
 
@@ -2198,12 +1732,10 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
         # 按执行范围（stop_at）逐阶段运行
         _run_stages(stages, state, stop_at)
 
-
         # 完成
         result = _build_result(state)
-        st.session_state.result_data = result
         elapsed = round(time.time() - t_start, 1)
-        st.session_state.elapsed_seconds = elapsed
+        log_sink.set_result(result, elapsed)
         if all(state.is_done(s[0]) for s in stages):
             add_log(f"全部完成！耗时 {elapsed:.0f} 秒", "success")
         else:
@@ -2216,10 +1748,10 @@ def execute_pipeline(url: str, style: str, enable_humanize: bool,
         _sys.stderr.write(f"[pipeline] 错误: {e}\n"); _sys.stderr.flush()
         add_log(f"流水线发生错误: {e}", "error")
         traceback.print_exc()
-        st.session_state.pipeline_error = str(e)
+        error = str(e)
     finally:
-        st.session_state.is_running = False
-        st.session_state.pipeline_done = True
+        log_sink.set_pipeline_done(error)
+
 
 
 def _build_result(state: PipelineState) -> dict:
@@ -2247,6 +1779,7 @@ def _build_result(state: PipelineState) -> dict:
         "eval_records": eval_records,
         "best_iteration": state.outputs.get("best_iteration", 0),
         "best_score": state.outputs.get("best_score", 0),
+        "quality_warning": state.outputs.get("quality_warning", False),
         "research_notes": research_notes,
     }
 
@@ -2258,17 +1791,19 @@ def _build_result(state: PipelineState) -> dict:
 # UI 侧边栏
 # ============================================================
 def render_sidebar():
-    """渲染侧边栏核心配置开关（风格 / 类型 / 人工化 / 配图）。"""
+    """渲染侧边栏：内容配置 + API 密钥 + 执行范围 + 快捷参考（统一入口）。"""
     with st.sidebar:
         # ── 侧栏标题 ──
         st.markdown(
             '<div style="display:flex;align-items:center;gap:8px;padding:4px 0 12px;">'
             '<span style="font-size:20px;">⚙️</span>'
-            '<span style="font-weight:600;font-size:16px;font-family:var(--font-sans);">内容配置</span>'
+            '<span style="font-weight:600;font-size:16px;font-family:var(--font-sans);">控制面板</span>'
             '</div>',
             unsafe_allow_html=True,
         )
 
+        # ── 内容配置 ──
+        st.caption("📝 内容配置")
         style = st.selectbox(
             "内容风格",
             options=[
@@ -2286,48 +1821,45 @@ def render_sidebar():
             options=[("toutie", "微头条"), ("article", "文章")],
             format_func=lambda x: x[1],
             horizontal=True,
+            index=1,                      # 默认选中「文章」
             key="sidebar_content_type",
         )
-
-        light_mode = st.toggle("☀️ 浅色主题", value=st.session_state.get("theme", "dark") == "light",
-                               help="切换浅色 / 暗色界面（原生控件，无需刷新）")
-        st.session_state.theme = "light" if light_mode else "dark"
 
         humanize = st.toggle("✍️ 人工化改写", value=True, help="去除 AI 味，输出更像真人手笔")
         with_images = st.toggle("🖼️ AI 配图生成", value=True,
                                 help="AI 生成封面图 + 内文配图（需配置图片 API Key）")
+        use_browser_cookies = st.toggle("🍪 浏览器 Cookie", value=True,
+                                        help="允许 yt-dlp 从 Chrome 浏览器提取 Cookie 用于抖音下载（仅下载阶段生效）")
+
+        # ── 界面 ──
+        st.caption("🎨 界面")
+        light_mode = st.toggle("☀️ 浅色主题", value=st.session_state.get("theme", "dark") == "light",
+                               help="切换浅色 / 暗色界面")
+        st.session_state.theme = "light" if light_mode else "dark"
 
         st.divider()
-        st.markdown(
-            '<div style="display:flex;align-items:center;gap:8px;padding:8px 0 4px;">'
-            '<span style="font-size:16px;">🎯</span>'
-            '<span style="font-weight:600;font-size:14px;font-family:var(--font-sans);">执行范围</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+
+        # ── 执行范围 ──
+        st.caption("🎯 执行范围")
         stop_at = st.selectbox(
             "执行到阶段",
             options=[
-                ("全部", "全部阶段（分步执行，每阶段需点「下一步」）"),
+                ("assemble", "组装（输出完整稿件）"),       # 默认：全流程连续执行
+                ("全部", "全部阶段（分步执行）"),
                 ("download", "下载"),
                 ("transcribe", "转录"),
                 ("write", "研究写作"),
                 ("generate_images", "配图"),
-                ("assemble", "组装（输出完整稿件）"),
             ],
             format_func=lambda x: x[1],
             key="sidebar_stop_at",
-            help="选择「一次生成到哪一步」：选「下载」只执行下载，选「转录」执行到转录完成即停。具体阶段为连续执行，不等待「下一步」。",
+            help="默认全流程连续执行到底；选「全部」为分步执行，选具体阶段则连续执行到该阶段即停",
         )
 
-        return style[0], content_type[0], humanize, with_images, stop_at[0]
+        st.divider()
 
-
-def render_config_panel():
-    """配置 Tab：API 密钥、下载设置、快捷参考（从侧栏迁移，减轻臃肿）。"""
-    st.markdown('<div class="section-title">⚙️ 高级配置</div>', unsafe_allow_html=True)
-
-    with st.expander("🔑 API 密钥设置", expanded=True):
+        # ── API 密钥 ──
+        st.caption("🔑 API 密钥")
         api_key = st.text_input(
             "DeepSeek API Key",
             value=os.getenv("AI_API_KEY", ""),
@@ -2342,63 +1874,56 @@ def render_config_panel():
             "Model",
             value=os.getenv("AI_MODEL", "deepseek-chat"),
         )
-        # Agnes 配图 API Key
-        st.markdown("---")
-        st.caption("🖼️ 配图模型（Agnes Image 2.0 Flash）")
-        agnes_key = st.text_input(
-            "Agnes API Key",
-            value=os.getenv("AGNES_API_KEY", ""),
-            type="password",
-            placeholder="ak-...",
-            help="https://apihub.agnes-ai.com 获取，当前 $0/张",
-        )
-        agnes_base = st.text_input(
-            "Agnes API Base",
-            value=os.getenv("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1"),
-        )
-        agnes_model = st.text_input(
-            "Agnes Model",
-            value=os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.0-flash"),
-        )
+
+        with st.expander("🖼️ 配图 API（Agnes）", expanded=False):
+            agnes_key = st.text_input(
+                "Agnes API Key",
+                value=os.getenv("AGNES_API_KEY", ""),
+                type="password",
+                placeholder="ak-...",
+                help="https://apihub.agnes-ai.com 获取",
+            )
+            agnes_base = st.text_input(
+                "Agnes API Base",
+                value=os.getenv("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1"),
+            )
+            agnes_model = st.text_input(
+                "Agnes Model",
+                value=os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.0-flash"),
+            )
+
         if st.button("💾 保存到 .env", use_container_width=True):
             _save_env(api_key, api_base, api_model, agnes_key, agnes_base, agnes_model)
             st.success("配置已保存！")
 
-    with st.expander("📥 下载设置", expanded=True):
-        st.caption("抖音：Playwright 真实浏览器自动拦截视频流，全自动无需 cookies。")
-        st.caption("其他平台：yt-dlp 直连下载。")
-        st.caption(f"依赖：Node.js + Playwright Chromium（首次自动安装）")
+        st.divider()
 
-    st.markdown('<div class="section-title">📖 快捷参考</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div style="overflow-x:auto;font-size:12px;">'
-        '<table style="width:100%;border-collapse:collapse;font-family:var(--font-sans);">'
-        '<thead><tr style="border-bottom:2px solid var(--border);">'
-        '<th style="text-align:left;padding:6px 8px;color:var(--text);font-weight:600;">风格</th>'
-        '<th style="text-align:right;padding:6px 8px;color:var(--text);font-weight:600;">字数</th>'
-        '<th style="text-align:left;padding:6px 8px;color:var(--text);font-weight:600;">特点</th>'
-        '</tr></thead><tbody>'
-        '<tr style="border-bottom:1px solid var(--border-soft);">'
-        '<td style="padding:5px 8px;">评书故事型</td><td style="text-align:right;padding:5px 8px;">800-1200</td><td style="padding:5px 8px;">河南方言，评书韵味</td>'
-        '</tr>'
-        '<tr style="border-bottom:1px solid var(--border-soft);">'
-        '<td style="padding:5px 8px;">军事深度</td><td style="text-align:right;padding:5px 8px;">800-1200</td><td style="padding:5px 8px;">七层递进法，证据驱动</td>'
-        '</tr>'
-        '<tr style="border-bottom:1px solid var(--border-soft);">'
-        '<td style="padding:5px 8px;">冷静克制冷</td><td style="text-align:right;padding:5px 8px;">800-1200</td><td style="padding:5px 8px;">事实为主，独到视角</td>'
-        '</tr>'
-        '<tr style="border-bottom:1px solid var(--border-soft);">'
-        '<td style="padding:5px 8px;">硬核论证型</td><td style="text-align:right;padding:5px 8px;">800-1200</td><td style="padding:5px 8px;">数据驱动，逻辑严密</td>'
-        '</tr>'
-        '<tr style="border-bottom:1px solid var(--border-soft);">'
-        '<td style="padding:5px 8px;">快讯速报型</td><td style="text-align:right;padding:5px 8px;">300-500</td><td style="padding:5px 8px;">3段讲清，零铺垫</td>'
-        '</tr>'
-        '<tr>'
-        '<td style="padding:5px 8px;">互动讨论型</td><td style="text-align:right;padding:5px 8px;">500-800</td><td style="padding:5px 8px;">开放式提问，撩互动</td>'
-        '</tr>'
-        '</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
+        # ── 快捷参考（可折叠） ──
+        with st.expander("📖 下载说明 & 快捷参考", expanded=False):
+            st.caption("抖音：Playwright 真实浏览器自动拦截视频流。")
+            st.caption("其他平台：yt-dlp 直连下载。")
+            st.caption("依赖：Node.js + Playwright Chromium（首次自动安装）")
+            st.markdown("---")
+            st.caption("**各风格参考（旧系统遗留，仅作参考）**")
+            st.markdown(
+                '<div style="overflow-x:auto;font-size:11px;">'
+                '<table style="width:100%;border-collapse:collapse;">'
+                '<tr style="border-bottom:1px solid var(--border-soft);">'
+                '<td>评书故事型</td><td style="text-align:right;">800-1200</td><td>河南方言</td>'
+                '</tr><tr style="border-bottom:1px solid var(--border-soft);">'
+                '<td>军事深度</td><td style="text-align:right;">800-1200</td><td>七层递进法</td>'
+                '</tr><tr style="border-bottom:1px solid var(--border-soft);">'
+                '<td>冷静克制冷</td><td style="text-align:right;">800-1200</td><td>事实为主</td>'
+                '</tr><tr style="border-bottom:1px solid var(--border-soft);">'
+                '<td>快讯速报型</td><td style="text-align:right;">300-500</td><td>3段讲清</td>'
+                '</tr><tr>'
+                '<td>互动讨论型</td><td style="text-align:right;">500-800</td><td>开放式提问</td>'
+                '</tr></table></div>',
+                unsafe_allow_html=True,
+            )
+
+        return style[0], content_type[0], humanize, with_images, stop_at[0], use_browser_cookies
+
 
 
 def _save_env(api_key: str, api_base: str, api_model: str,
@@ -2419,12 +1944,14 @@ def _save_env(api_key: str, api_base: str, api_model: str,
     found = set()
     for line in lines:
         stripped = line.strip()
+        replaced = False
         for k, v in updated.items():
             if stripped.startswith(f"{k}=") and k not in found:
                 new_lines.append(f"{k}={v}")
                 found.add(k)
+                replaced = True
                 break
-        else:
+        if not replaced:
             new_lines.append(line)
 
     for k, v in updated.items():
@@ -2453,7 +1980,7 @@ def render_main():
     status_state = "running" if is_running else ("done" if has_result else "ready")
     status_text = "● 运行中" if is_running else ("● 已完成" if has_result else "● 就绪")
     st.markdown(
-        f'<div style="text-align:center;"><span class="status-pill {status_state}">{status_text}</span></div>',
+        f'<div style="text-align:center;"><span class="status-pill {html.escape(status_state)}">{html.escape(status_text)}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -2495,13 +2022,14 @@ def render_main():
         clear_btn = st.button("🗑 清空", use_container_width=True, disabled=is_running)
 
     if clear_btn:
+        log_sink.reset()
         for k in ("logs", "result_data", "pipeline_state", "run_id", "processed_url",
                   "pipeline_error", "pipeline_done"):
             st.session_state[k] = _DEFAULTS[k]
         for s_name in st.session_state.stage_status:
             st.session_state.stage_status[s_name] = "pending"
-        st.session_state.progress_pct = 0.0
         st.rerun()
+
 
     return url, generate_btn
 
@@ -2579,7 +2107,27 @@ def render_results():
     """渲染结果展示区（质检整宽 + 封面/统计卡 + 稿件 + 响应式操作）。"""
     result = st.session_state.result_data
     if not result:
+        # ── 空状态：引导用户去工作台 ──
+        st.markdown(
+            '<div class="empty-state" style="padding:64px 16px;">'
+            '<div style="font-size:48px;margin-bottom:16px;opacity:0.5;">📊</div>'
+            '<p style="margin:0 0 8px;font-size:16px;font-weight:600;color:var(--text);">暂无成果</p>'
+            '<p style="margin:0 0 4px;font-size:13px;color:var(--text-secondary);">'
+            '在工作台输入视频链接并启动流水线后，</p>'
+            '<p style="margin:0;font-size:13px;color:var(--text-secondary);">完成的稿件将在此处展示</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
         return
+
+    # ── 质量警告横幅（D5-F：低于阈值不中断但展示警告）──
+    if result.get("quality_warning"):
+        best_score = result.get("best_score", 0)
+        st.warning(
+            f"⚠️ **质量警告**：AI 综合评分 {best_score}/100，低于质量阈值。"
+            f"建议人工复核内容的事实准确性和表达质量后再发布。"
+            f"原始 AI 生成文件 `*_ai_raw.md` 已保存，可查阅完整内容。"
+        )
 
     import pandas as pd
 
@@ -2602,7 +2150,7 @@ def render_results():
         st.markdown(
             f'<span class="stat-badge">📝 {result.get("char_count", 0)} 字符</span>'
             f'<span class="stat-badge">📁 {len(result.get("file_list", []))} 个文件</span>'
-            f'<span class="stat-badge">🆔 {result.get("run_id", "")}</span>',
+            f'<span class="stat-badge">🆔 {html.escape(str(result.get("run_id", "")))}</span>',
             unsafe_allow_html=True,
         )
         # 操作按钮（窄屏响应式降级）
@@ -2713,13 +2261,30 @@ def render_results():
 # ============================================================
 # ── 流水线互斥锁：防止 Streamlit 多次 rerun 导致并发执行 ──
 _PIPELINE_LOCK = threading.Lock()
+# 分步模式控制器（跨线程安全）
+_STAGE_EVENT = threading.Event()
+
+
+def _new_log_file_path() -> str:
+    """生成新的日志文件路径（每轮运行独立）。"""
+    _log_dir = ENGINE_ROOT / "log"
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _log_filename = f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    return str(_log_dir / _log_filename)
+
 
 def main():
-    style, content_type, humanize, with_images, stop_at = render_sidebar()
 
-    # ── Track 1：顶部 Tab 三分（运行监控 / 成果展示 / 配置） ──
-    tab_monitor, tab_results, tab_config = st.tabs(
-        ["🚀 运行监控", "📄 成果展示", "⚙️ 配置"]
+    style, content_type, humanize, with_images, stop_at, use_browser_cookies = render_sidebar()
+    st.session_state.use_browser_cookies = use_browser_cookies
+
+    # 把后台线程写入 ui.log_sink 的状态同步到 st.session_state（本 run 起点）
+    _sync_ui_state_to_session()
+
+    # ── 顶部 Tab：工作台 / 成果（2 Tab，配置已归入 Sidebar） ──
+
+    tab_monitor, tab_results = st.tabs(
+        ["🎯 工作台", "📊 成果"]
     )
 
     with tab_monitor:
@@ -2736,13 +2301,13 @@ def main():
                 st.warning("⏳ 流水线已在另一个会话中执行，请等待完成后再试")
             else:
                 try:
-                    # 初始化运行状态
-                    st.session_state.is_running = True
-                    st.session_state.pipeline_done = False
-                    st.session_state.pipeline_error = None
-                    st.session_state.logs = []
-                    st.session_state.stage_event = threading.Event()   # 分步控制器
-                    st.session_state.awaiting_next = False
+                    # 初始化运行状态：生成新日志文件，重置 UI 状态
+                    _new_log = _new_log_file_path()
+                    st.session_state.log_file_path = _new_log
+                    log_sink.install(_new_log)
+                    log_sink.reset()
+                    log_sink.set_running(True)
+                    _STAGE_EVENT.clear()
 
                     # 首启分阶段状态（Track 3：阶段性加载反馈，替代单行 spinner）
                     if _TORCH_MOD is None or _PIPELINE_FN is None:
@@ -2757,8 +2322,9 @@ def main():
                         except BaseException as e:
                             # 必须捕获 BaseException：兜底线程级致命错误（含 KeyboardInterrupt），
                             # 并确保无论成功/失败/中断都释放 _PIPELINE_LOCK，防止锁泄漏导致后续无法启动。
-                            if not st.session_state.pipeline_error:
-                                st.session_state.pipeline_error = f"致命错误({type(e).__name__}): {e}"
+                            log_sink.set_pipeline_done(
+                                f"致命错误({type(e).__name__}): {e}"
+                            )
                         finally:
                             _PIPELINE_LOCK.release()
 
@@ -2771,9 +2337,13 @@ def main():
 
         # ── 情况 2/3：进度 + 日志 ──
         #    运行中：fragment 仅刷新进度/日志/下一步按钮，不重绘标题与 URL 输入，消除整页闪烁
-        if st.session_state.is_running and not st.session_state.pipeline_done:
+        #    判断条件读 UISync 实时快照（线程安全），避免 2162 行 sync 时 UISync 尚未 set_running 的时序死锁
+        _snap = log_sink.snapshot()
+        if _snap["is_running"] and not _snap["pipeline_done"]:
+
             @st.fragment(run_every=3)
             def _live_logs():
+                _sync_ui_state_to_session()
                 render_progress()
                 render_logs()
                 # 分步控制器按钮【必须放在 fragment 内部】
@@ -2784,7 +2354,7 @@ def main():
                         st.info("⏸️ 当前阶段已完成，点击下方按钮继续下一阶段")
                         if st.button("▶ 下一步", use_container_width=True,
                                      type="primary", key="btn_next_stage"):
-                            st.session_state.stage_event.set()
+                            _STAGE_EVENT.set()
                             st.rerun()
                 else:
                     col1, col2, col3 = st.columns([2, 3, 2])
@@ -2794,7 +2364,10 @@ def main():
                 if st.session_state.pipeline_done:
                     st.rerun()
             _live_logs()
+
         else:
+            # 兜底：运行结束后把 UISync 最终状态（result_data/pipeline_done/stage_status）拉回 session_state
+            _sync_ui_state_to_session()
             render_progress()
             render_logs()
             # 全部完成状态
@@ -2806,11 +2379,9 @@ def main():
             if st.session_state.pipeline_error:
                 st.error(f"流水线执行异常: {st.session_state.pipeline_error}")
 
+
     with tab_results:
         render_results()
-
-    with tab_config:
-        render_config_panel()
 
 
 if __name__ == "__main__":

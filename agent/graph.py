@@ -32,6 +32,8 @@ AgentGraph — Evaluator-Optimizer 工作流图构建器
 路由函数签名: router(state: AgentState) -> str
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+
 from __future__ import annotations
 
 import logging

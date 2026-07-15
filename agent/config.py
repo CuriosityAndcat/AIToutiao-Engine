@@ -8,6 +8,8 @@ RunConfig 定义 Agent 运行时的所有可配置参数，
 包括最大迭代次数、追踪、检查点等。
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

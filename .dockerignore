@@ -1,0 +1,56 @@
+# ── Git ──
+.git/
+.gitignore
+.gitattributes
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# ── 虚拟环境 ──
+venv/
+.venv/
+env/
+.env/
+
+# ── IDE ──
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── 运行时产物 ──
+outputs/
+log/
+*.log
+
+# ── 密钥（通过 docker-compose/env 注入）──
+.env
+!.env.example
+
+# ── 大型模型文件（通过 volume 挂载）──
+lib/sensevoice-asr/models/
+*.pt
+*.pth
+*.bin
+
+# ── 文档/测试（可选排除）──
+docs/
+specs/
+tests/
+backup/
+*.md
+!README.md
+!AGENTS.md
+
+# ── Windows 脚本 ──
+*.bat
+*.ps1
+
+# ── Node.js（按需取消注释）──
+# lib/video-batch-download-main/node_modules/

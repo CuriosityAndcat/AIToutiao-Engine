@@ -8,6 +8,9 @@ TypedDict State 定义是 LangGraph StateGraph 编译的前提条件。
 消息列表使用 add_messages reducer 实现追加式更新。
 """
 
+# STATUS: UNUSED — 完整 LangGraph Evaluator-Optimizer 框架，待批次 C AgentGraph/Runner 接入生产后激活
+# NOTE: 此模块无未来使用计划，可在批次 C 确认后删除
+
 from __future__ import annotations
 
 from typing import Annotated, Any, TypedDict

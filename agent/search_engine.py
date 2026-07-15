@@ -1,16 +1,21 @@
 """
-搜索引擎模块 — 百度 + 搜狗（国内可直连）
+搜索引擎模块 — Bing API + 搜狗（国内可直连）
 
-替换原有 DuckDuckGo 搜索，改用国内搜索引擎。
-策略：百度优先 → 搜狗 fallback → 返回空结果。
+多引擎分层策略，按质量与可靠性排序：
+  Bing Web Search API（结构化 JSON，零反爬风险）→ 搜狗（免费 fallback）→ 返回空。
 
 使用示例:
     from agent.search_engine import search_web
     results = search_web("Python 最新版本", max_results=5)
+
+环境变量:
+    BING_API_KEY  — Microsoft Bing Web Search API v7 密钥（可选，未配置则跳过）
 """
 
 from __future__ import annotations
 
+import json as _json
+import os as _os
 import re as _re
 import sys as _sys
 import time as _time
@@ -57,6 +62,21 @@ def _fetch_html(url: str, timeout: int = 15) -> str | None:
     except urllib.error.HTTPError as e:
         _sys.stderr.write(f"[search_engine] HTTP {e.code}: {url[:80]}\n")
         _sys.stderr.flush()
+        # 429 限流 → 指数退避重试，404/403 → 立即返回空
+        if e.code == 429:
+            _time.sleep(2)
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    content = resp.read()
+                    content_encoding = resp.headers.get("Content-Encoding", "")
+                    if "gzip" in content_encoding:
+                        import gzip
+                        content = gzip.decompress(content)
+                    html = content.decode("utf-8", errors="replace")
+                    return html
+            except Exception:
+                pass
         return None
     except Exception as e:
         _sys.stderr.write(f"[search_engine] 请求异常: {e}\n")
@@ -65,7 +85,72 @@ def _fetch_html(url: str, timeout: int = 15) -> str | None:
 
 
 # ══════════════════════════════════════════════════════════════
-#  百度搜索
+#  Bing Web Search API（首选 — 结构化 JSON，零反爬风险）
+# ══════════════════════════════════════════════════════════════
+
+def _search_bing_api(query: str, max_results: int = 5) -> list[str]:
+    """通过 Bing Web Search API v7 搜索，返回结构化结果摘要。
+
+    免费层: 1000 次/月，国内可直连。
+    需在 .env 中配置 BING_API_KEY（Azure 门户 → 创建 Bing Search 资源 → Keys and Endpoint）。
+    """
+    api_key = _os.environ.get("BING_API_KEY", "").strip()
+    if not api_key:
+        _sys.stderr.write("[search_engine] Bing API key 未配置，跳过\n")
+        _sys.stderr.flush()
+        return []
+
+    encoded = urllib.parse.quote(query)
+    url = (
+        f"https://api.bing.microsoft.com/v7.0/search"
+        f"?q={encoded}&count={max_results}&mkt=zh-CN&responseFilter=Webpages"
+    )
+    headers = {
+        "Ocp-Apim-Subscription-Key": api_key,
+        "User-Agent": _random_ua(),
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, headers=headers)
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        _sys.stderr.write(f"[search_engine] Bing API HTTP {e.code}: {e.reason}\n")
+        _sys.stderr.flush()
+        return []
+    except Exception as e:
+        _sys.stderr.write(f"[search_engine] Bing API 异常: {e}\n")
+        _sys.stderr.flush()
+        return []
+
+    results: list[str] = []
+    web_pages = data.get("webPages", {}).get("value", [])
+    for page in web_pages[:max_results]:
+        name = page.get("name", "")
+        snippet = page.get("snippet", "")
+        url_str = page.get("url", "")
+        # 组合「标题 + 摘要 + URL」为一条结果
+        parts = []
+        if name:
+            parts.append(name)
+        if snippet:
+            parts.append(snippet)
+        combined = " — ".join(parts)
+        if not combined or len(combined) < 10:
+            continue
+        # 附加来源 URL（方便事实核实）
+        if url_str:
+            combined += f" [来源: {url_str}]"
+        results.append(combined)
+
+    _sys.stderr.write(f"[search_engine] Bing API 返回 {len(results)} 条\n")
+    _sys.stderr.flush()
+    return results
+
+
+# ══════════════════════════════════════════════════════════════
+#  百度搜索（保留但不再作为首选，结果以广告/采购为主）
 # ══════════════════════════════════════════════════════════════
 
 def _search_baidu(query: str, max_results: int = 5) -> list[str]:
@@ -134,7 +219,8 @@ def _search_baidu(query: str, max_results: int = 5) -> list[str]:
 def _search_sogou(query: str, max_results: int = 5) -> list[str]:
     """通过 HTTP 抓取搜狗搜索结果摘要。
 
-    搜狗搜索结果页面结构较简单，直接解析摘要文本。
+    2026-07-15 修复：str_info / str-text 选择器已过期（0 命中），
+    改用新版 DOM 模式 + <em> 高亮区块 + JSON 噪音过滤。
     """
     encoded = urllib.parse.quote(query)
     url = f"https://www.sogou.com/web?query={encoded}&ie=utf8"
@@ -145,34 +231,39 @@ def _search_sogou(query: str, max_results: int = 5) -> list[str]:
         _sys.stderr.flush()
         return []
 
+    # 预清除 <style> / <script> 块，避免 CSS/JS 噪音混入结果
+    html = _re.sub(r'<style[^>]*>.*?</style>', '', html, flags=_re.DOTALL | _re.IGNORECASE)
+    html = _re.sub(r'<script[^>]*>.*?</script>', '', html, flags=_re.DOTALL | _re.IGNORECASE)
+
     results: list[str] = []
 
-    # ── 策略 1: 搜狗结果摘要 class ──
-    # 搜狗用 <div class="str-text"> 或 class 包含 "abstract" / "str_info" / "space-txt"
+    # ── 策略 1: 新版搜狗结果容器（vrwrap / result / rb） ──
     for pattern in [
-        r'<p[^>]*class="[^"]*str_info[^"]*"[^>]*>(.*?)</p>',
-        r'<p[^>]*class="[^"]*str-text[^"]*"[^>]*>(.*?)</p>',
-        r'<div[^>]*class="[^"]*(?:abstract|str_info|space-txt|str-text)[^"]*"[^>]*>(.*?)</div>',
-        r'<p[^>]*class="[^"]*(?:abstract|str_info|space-txt|str-text)[^"]*"[^>]*>(.*?)</p>',
+        # vrwrap 容器内的文本块（新版搜狗）
+        r'<div[^>]*class="[^"]*(?:vrwrap|vrwrap[^"]*)"[^>]*>(.*?)</div>\s*</div>\s*</div>',
+        # rb 类结果块
+        r'<div[^>]*class="[^"]*(?:rb|result)[^"]*"[^>]*>(.*?)</div>\s*</div>',
+        # 通用摘要类
+        r'<(?:p|div|span)[^>]*class="[^"]*(?:abstract|space-txt|summary|desc)[^"]*"[^>]*>(.*?)</(?:p|div|span)>',
     ]:
         snippets = _re.findall(pattern, html, _re.DOTALL)
         for s in snippets:
             clean = _strip_html(s)
-            if clean and len(clean) > 15 and len(clean) < 2000:
-                if clean not in results:
-                    results.append(clean)
+            if clean and 15 < len(clean) < 2000:
+                if not _is_noise_text(clean) and not _is_json_noise(clean):
+                    if clean not in results:
+                        results.append(clean)
 
-    # ── 策略 2: 通用链文本提取 ──
+    # ── 策略 2: <em> 高亮区块提取（搜狗最可靠信号） ──
     if len(results) < max_results:
-        # 搜狗结果中 <em> 标注匹配词，提取包含 <em> 的父级元素
         blocks = _re.findall(
-            r'<(?:p|div|span)[^>]*>((?:(?!<(?:p|div|span)\b).)*?<em>.*?</em>.*?)</(?:p|div|span)>',
+            r'<(?:p|div|span|a|h\d)[^>]*>((?:(?!<(?:p|div|span|a|h\d)\b).)*?<em>.*?</em>.*?)</(?:p|div|span|a|h\d)>',
             html, _re.DOTALL,
         )
         for b in blocks:
             clean = _strip_html(b)
-            if clean and len(clean) > 20 and clean not in results:
-                if not _is_noise_text(clean):
+            if clean and len(clean) > 15 and clean not in results:
+                if not _is_noise_text(clean) and not _is_json_noise(clean):
                     results.append(clean)
 
     # ── 策略 3: 宽松匹配 — 长文本块 ──
@@ -184,7 +275,7 @@ def _search_sogou(query: str, max_results: int = 5) -> list[str]:
         for b in blocks:
             clean = _strip_html(b)
             if clean and len(clean) > 20 and clean not in results:
-                if not _is_noise_text(clean):
+                if not _is_noise_text(clean) and not _is_json_noise(clean):
                     results.append(clean)
 
     _sys.stderr.write(f"[search_engine] 搜狗返回 {len(results[:max_results])} 条\n")
@@ -237,14 +328,48 @@ def _is_noise_text(text: str) -> bool:
     return False
 
 
+def _is_json_noise(text: str) -> bool:
+    """判断是否为 JSON / JS / CSS 数据噪音（搜狗页面常混入元数据或样式块）。
+
+    检测特征：JSON 对象/数组字面量、大量转义引号、纯 JS 赋值表达式、
+    CSS 规则块 (`.class { prop: val; }`)、或 `"key":` 模式开头的行。
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    # JSON 对象开头
+    if stripped.startswith("{") and ("\"classId\"" in stripped or "\"cardInfo\"" in stripped):
+        return True
+    # JSON 数组开头
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return True
+    # 大量转义字符（JSON 内嵌 HTML）
+    escaped_count = stripped.count("\\\"") + stripped.count("\\\\")
+    if escaped_count > 5 and len(stripped) > 100:
+        return True
+    # JS 赋值表达式（如 var xxx = {...}）
+    if _re.match(r'^(?:var|let|const)\s+\w+\s*=\s*[\{\[]', stripped):
+        return True
+    # cardInfo / qqBrowser 等元数据 blob
+    if any(kw in stripped for kw in ["cardInfo", "qqBrowserVersion", "isQB"]):
+        return True
+    # 纯 JS 函数/回调
+    if _re.match(r'^(?:function|callback|window\.)', stripped):
+        return True
+    # CSS 规则块（.classname { property: value; }）
+    if _re.search(r'\.[a-z][\w-]*\s*\{[^}]*\}', stripped):
+        return True
+    return False
+
+
 # ══════════════════════════════════════════════════════════════
 #  统一搜索入口
 # ══════════════════════════════════════════════════════════════
 
 def search_web(query: str, max_results: int = 5) -> str:
-    """使用百度 + 搜狗搜索，返回聚合的搜索结果摘要（纯文本）。
+    """多引擎分层搜索，返回聚合的搜索结果摘要（纯文本）。
 
-    策略：百度优先 → 搜狗 fallback → 返回空字符串。
+    策略：Bing API（首选，结构化 JSON）→ 搜狗（免费 fallback）→ 返回空字符串。
 
     Args:
         query: 搜索关键词
@@ -259,28 +384,28 @@ def search_web(query: str, max_results: int = 5) -> str:
 
     query = query.strip()
 
-    # ── 方案一：百度搜索 ──
+    # ── 方案一：Bing Web Search API（首选 — 结构化 JSON，零反爬风险） ──
     try:
-        _sys.stderr.write(f"[research] 百度搜索: {query[:60]}\n")
+        _sys.stderr.write(f"[research] Bing API 搜索: {query[:60]}\n")
         _sys.stderr.flush()
-        baidu_results = _search_baidu(query, max_results)
-        if baidu_results:
-            formatted = "\n".join(f"- {r[:300]}" for r in baidu_results[:max_results])
+        bing_results = _search_bing_api(query, max_results)
+        if bing_results:
+            formatted = "\n".join(f"- {r[:400]}" for r in bing_results[:max_results])
             return formatted
-        _sys.stderr.write("[research] 百度无结果，尝试搜狗\n")
+        _sys.stderr.write("[research] Bing API 无结果/未配置，尝试搜狗\n")
         _sys.stderr.flush()
     except Exception as e:
-        _sys.stderr.write(f"[research] 百度异常: {e}，尝试搜狗\n")
+        _sys.stderr.write(f"[research] Bing API 异常: {e}，尝试搜狗\n")
         _sys.stderr.flush()
 
-    # ── 方案二：搜狗搜索（fallback） ──
+    # ── 方案二：搜狗搜索（免费 fallback） ──
     try:
         _time.sleep(0.5)  # 避免请求过快
         _sys.stderr.write(f"[research] 搜狗搜索: {query[:60]}\n")
         _sys.stderr.flush()
         sogou_results = _search_sogou(query, max_results)
         if sogou_results:
-            formatted = "\n".join(f"- {r[:300]}" for r in sogou_results[:max_results])
+            formatted = "\n".join(f"- {r[:400]}" for r in sogou_results[:max_results])
             return formatted
     except Exception as e:
         _sys.stderr.write(f"[research] 搜狗异常: {e}\n")
