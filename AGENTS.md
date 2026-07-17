@@ -266,8 +266,11 @@ L5 网络层  →  web_search / web_fetch（兜底）
 | **PUB-1** | **super-publisher 发布方案接入**：`engine_app.py` 新增发布 Tab（`render_publish` 函数）→ `publish_article`；`models.py` 新增 `content_base_dir`；`main.py` 入参传递。Markdown 图片→占位符→剪贴板粘贴，头条原生渲染 | ✅ 完成 (2026-07-17) | 本次提交 |
 | **PUB-2** | **发布流程精简为 4 步**：填标题→填正文→插封面+内文图→关闭页面。移除发布按钮点击 / 位置设置 / 广告收益 / 头条声明 / 封面模式切换。`tests/test_publish.py` 测试入口 | ✅ 完成 (2026-07-17) | 本次提交 |
 | **PUB-3** | **图片插入三大修复**：①累计计数→增量计数检测（`img_count_before` 验证 +1）；②3次粘贴重试（递增 backoff 2s/4s/6s）；③盲等 `sleep`→轮询等待"草稿已保存"（最多 15s，超时降级 3s）。根治内文图"保存失败"竞态冲突 | ✅ 完成 (2026-07-17) | 本次提交 |
+| **PUB-UPLOAD** | **发布 Tab .md 上传发布**：无流水线产出时可在发布 Tab 上传本地 .md 文件直接发布。解析：`# Title`→标题、剩余→正文；标题可编辑；来源标识 "📂 来源: xxx.md" + 清除按钮 | ✅ 完成 (2026-07-17) | `405467a` |
+| **PUB-IMAGE** | **上传文件图片目录输入**：含图片引用的 .md 文件上传后，新增"产出目录"输入框，自动检测 `images/cover.png` 和 `images/inline_*.png/jpg`。留空按纯文本发布，清空重置配图状态 | ✅ 完成 (2026-07-17) | `405467a` |
+| **AUTH-DOM** | **发布登录 DOM 兜底检测**：`publisher_service.py` `setup_auth` URL 模式未命中时检查 `body.innerText`（发布/内容管理/创作中心关键字），SSO 中转页自动跳过 | ✅ 完成 (2026-07-17) | `405467a` |
 
-> ✅ **提交状态（2026-07-17）**：2026-07-15 以来累积的 PUB-1~3 / COMPLIANCE-1 / STYLE-FENGHUO / LOOP-1 共计 6 批次统一提交到 `master`。含 11 个 modified（publisher_service.py / write_stage.py / engine_app.py / AGENTS.md 等）、13 个 deleted（docs/plans/ 旧方案）、4 个 new（compliance.py / fenghuo_qingbao.py / test_publish.py / 头条百科文档）。
+> ✅ **提交状态（2026-07-17）**：2026-07-15 以来累积的 PUB-1~3 / COMPLIANCE-1 / STYLE-FENGHUO / LOOP-1 共计 6 批次统一提交到 `master`（`a09ba44`）。随后 PUB-UPLOAD / PUB-IMAGE / AUTH-DOM 3 批次提交到 `master`（`405467a`）。含 13 个 modified、13 个 deleted、5 个 new。
 
 **随本次提交入库的内容**：
 - `lib/toutiao-auto-publisher/backend/compliance.py` — 合规检测闭环（20项规则→LLM审查→修复重写）
