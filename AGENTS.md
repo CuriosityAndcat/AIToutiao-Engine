@@ -25,6 +25,7 @@
 | `requirements.txt` / `run_engine.bat` / `README.md` | 依赖、启动脚本、说明 | — |
 | `_test_faster_whisper.py` / `_test_transcribe_speed.py` | ASR 速度验证脚本 | 散落根目录，待归入 `lib/sensevoice-asr/` |
 | `docs/Skills/` | **本地化 Agent 技能/角色库**（superpowers-zh / agency-agents-zh / ui-ux-pro-max） | 纯 `SKILL.md`/`Markdown`，CodeBuddy 纯对话调用，详见「SAWORKFLOW 操作方法论」 |
+| `docs/AgentsWorkSpace/` | **智能体工作流产出目录** — 按 agent 分 14 个子目录存放所有工作方案/检验报告/校验报告 | 项目经理方案 → `项目经理/`，reality-checker 审查 → `reality-checker/` 等 |
 | `.codebuddy/` | **CodeBuddy IDE 配置层** — Skills / Agents / Rules / Memory | 详见下方「CodeBuddy 配置层」 |
 
 ---
@@ -60,7 +61,7 @@
 | `publisher_service.py` | 发布服务 | — |
 | `config.py` / `main.py` | 配置 / 入口 | — |
 | `prompts/` | 10 个 prompt 模板 | — |
-| `fact_pipeline.py` | **Claim-Pipeline 三阶段事实锚定**（B-2）：提取→验证→合并，零 LLM 依赖注入 | 待接入 `write_stage`，详见 `docs/plans/2026-07-13-fact-hallucination-plan.md` |
+| `fact_pipeline.py` | **Claim-Pipeline 三阶段事实锚定**（B-2）：提取→验证→合并，零 LLM 依赖注入 | 待接入 `write_stage`，详见 `docs/AgentsWorkSpace/项目经理/2026-07-13-fact-hallucination-plan.md` |
 | `STYLE_GUIDE_MILITARY.md` | 军事风风格指南 | — |
 
 ---
@@ -124,7 +125,7 @@
 - **质量门**：本引擎 `evaluation.py`（5 维 / 通用阈值 75，研究-写作阶段 80）+ `write_stage` 自愈闭环（替代 superpowers 的 Reality Checker / TDD 终裁）。
 
 ### 两阶段协议（CodeBuddy 纯对话执行，不跑任何 install 脚本）
-- **Phase A 规划（superpowers 主导）**：读 `brainstorming`+`writing-plans`+`requesting-code-review`（可选 `workflow-runner`），对任务做 HARD-GATE 共识 → 产出结构化「总体方案」（阶段→任务拆分→每任务指派 agency 角色→每任务验收标准→检查点）→ 方案自检。落盘 `docs/plans/<日期>-<任务>-plan.md`，并写入 `.codebuddy/memory/`。
+- **Phase A 规划（superpowers 主导）**：读 `brainstorming`+`writing-plans`+`requesting-code-review`（可选 `workflow-runner`），对任务做 HARD-GATE 共识 → 产出结构化「总体方案」（阶段→任务拆分→每任务指派 agency 角色→每任务验收标准→检查点）→ 方案自检。落盘 `docs/AgentsWorkSpace/项目经理/<日期>-<任务>-plan.md`，并写入 `.codebuddy/memory/`。
 - **Phase B 执行（agency-agents 主导）**：依据总体方案，对每项任务读对应 `agency-agents-zh-main/<角色>.md` 并采用其设定执行；完成后用 `evaluation.py`+`write_stage` 做质量门，不通过打回（≤3 次）。可借主 agent 的 `Task` 子代理工具为各角色任务并行派发。
 
 ### 触发方式（用户侧 vs Agent 侧，关键修正）
@@ -259,24 +260,23 @@ L5 网络层  →  web_search / web_fetch（兜底）
 | 批次 C | `graph.py` 通用编排决策（AgentGraph/Runner 接入生产循环） | ⏳ 待立项 | — |
 | 批次 D | 内容选题变现（`scripts/` + `docs/` 研究产出 review 后提交） | ⏳ 待评审 | `0a2d6a1` |
 | **tests/ 阶段测试入口** | **各阶段功能测试框架**：`tests/run_stage.py`（`--stage 1|2|3|4|5`）+ `tests/_harness.py`（streamlit stub 注入后 import engine_app），直接调用项目真实函数做功能测试（非 LLM 模拟）；S2/S3/S4/S5 已真跑实测全部 PASS（S2 修复 streamlit 桩 `__file__` 缺失导致的 torch `_prims` 注册崩溃），S1 待 `--url` | ✅ 完成 (2026-07-14) | `0a2d6a1` `aecc51b` |
-| **LOOP-1** | **S3→S4→S5 质量闭环 LOOP**：`tests/run_loop.py` — 外层 5 轮 LOOP + 每阶段内 3 次重试 + 评审门禁（S3: evaluation.py 5维 §1-§3 / S4: ARTICLE_SPEC §5 P-01~P-05 / S5: §4 输出验证），评审不通过→注入反馈→修改重试，全阶段通过才结束。reality-checker 审查修复 3 严重 + 4 中等缺陷后出站 | ✅ 完成 (2026-07-15) | 待提交 |
+| **LOOP-1** | **S3→S4→S5 质量闭环 LOOP**：`tests/run_loop.py` — 外层 5 轮 LOOP + 每阶段内 3 次重试 + 评审门禁（S3: evaluation.py 5维 §1-§3 / S4: ARTICLE_SPEC §5 P-01~P-05 / S5: §4 输出验证），评审不通过→注入反馈→修改重试，全阶段通过才结束。reality-checker 审查修复 3 严重 + 4 中等缺陷后出站 | ✅ 完成 (2026-07-15) | 本次提交 |
+| **COMPLIANCE-1** | **阶段三合规检测闭环**：`compliance.py` 新建（220行，20项头条平台规则→LLM审查→XML解析→修复重写），`write_stage.py` V2+CP 双路径注入合规LOOP（≤3轮），质量防退化回退（降幅>10），`compliance_warning` 不阻断流水线 | ✅ 完成 (2026-07-17) | 本次提交 |
+| **STYLE-FENGHUO** | **烽火情报风格新建**：`prompts/fenghuo_qingbao.py` — 反差悬念+短句节奏+数据佐证，禁止编号式章节标题和模板口语。接入 `write_stage.py` 的 `_select_style_prompt` 分派逻辑 | ✅ 完成 (2026-07-17) | 本次提交 |
+| **PUB-1** | **super-publisher 发布方案接入**：`engine_app.py` 新增发布 Tab（`render_publish` 函数）→ `publish_article`；`models.py` 新增 `content_base_dir`；`main.py` 入参传递。Markdown 图片→占位符→剪贴板粘贴，头条原生渲染 | ✅ 完成 (2026-07-17) | 本次提交 |
+| **PUB-2** | **发布流程精简为 4 步**：填标题→填正文→插封面+内文图→关闭页面。移除发布按钮点击 / 位置设置 / 广告收益 / 头条声明 / 封面模式切换。`tests/test_publish.py` 测试入口 | ✅ 完成 (2026-07-17) | 本次提交 |
+| **PUB-3** | **图片插入三大修复**：①累计计数→增量计数检测（`img_count_before` 验证 +1）；②3次粘贴重试（递增 backoff 2s/4s/6s）；③盲等 `sleep`→轮询等待"草稿已保存"（最多 15s，超时降级 3s）。根治内文图"保存失败"竞态冲突 | ✅ 完成 (2026-07-17) | 本次提交 |
 
-> ✅ **提交状态（2026-07-14）**：自 `4f944b6` 以来累积的 **17 个 modified + 15 个 untracked** 已统一提交到 `master`，覆盖网页UI重设计 / Agnes配图 / CodeBuddy配置 / 全球档案馆G-1 / Claim-Pipeline(B-2) / SAWORKFLOW方法论 / tests阶段测试入口 等批次；批次 D（`scripts/`+`docs/采集`+`docs/风格分析`）一并入库，留待后续 review。
+> ✅ **提交状态（2026-07-17）**：2026-07-15 以来累积的 PUB-1~3 / COMPLIANCE-1 / STYLE-FENGHUO / LOOP-1 共计 6 批次统一提交到 `master`。含 11 个 modified（publisher_service.py / write_stage.py / engine_app.py / AGENTS.md 等）、13 个 deleted（docs/plans/ 旧方案）、4 个 new（compliance.py / fenghuo_qingbao.py / test_publish.py / 头条百科文档）。
 
 **随本次提交入库的内容**：
-- `scripts/`（4 py：analyze_style / curate_corpus / synthesize_style / toutiao_collect）
-- `docs/采集/`（85 md）、`docs/风格分析/`（46 文件）—— 内容研究产出；其中 `风格分析/` 已落地为 E-2 的生产风格系统（包明说/晋说/全球档案馆/听风的蚕）
-- `docs/plans/`（4 份方案：知识库接入 / 配图 LLM prompt / UI 优化 / 事实幻觉 Claim-Pipeline）
-- `docs/网页优化/`、`docs/网页UI优化方案/` — UI 重设计相关分析文档
-- `docs/Skills/`（superpowers-zh / agency-agents-zh / ui-ux-pro-max）— 本地技能库
-- `docs/CodeBuddy/`（14 文件）— CodeBuddy 产品知识库
-- `docs/agentic-workflow.md` / `docs/role_agent_frameworks.md` / `docs/superpowers_review.md` / `docs/superpowers_x_agency.md` — 框架调研笔记
-- `tests/`（3 文件：`__init__.py` / `_harness.py` / `run_stage.py`）— 各阶段功能测试入口（直接调项目真实函数，非 LLM 模拟）
-
-**当前未跟踪（仅 2 个新增文件，待后续提交）**：
-- `docs/Skills/agency-agents-zh-main/PROJECT-AGENT-MAP.md` — agency-agents-zh 项目→角色映射表
-- `docs/Skills/agency-agents-zh-main/REPO-UNDERSTANDING.md` — 仓库理解说明
+- `lib/toutiao-auto-publisher/backend/compliance.py` — 合规检测闭环（20项规则→LLM审查→修复重写）
+- `lib/toutiao-auto-publisher/backend/prompts/fenghuo_qingbao.py` — 烽火情报风格 prompt
+- `tests/test_publish.py` — 发布功能测试入口（CLI 参数 `--article` / `--headless`）
+- `docs/头条百科帮助中心完整文档.md` — 头条百科帮助中心 7 页面完整文档
+- `docs/AgentsWorkSpace/` — 智能体工作流产出（14 子目录）
+- `docs/Skills/agency-agents-zh-main/` — 266 中文角色库（含 PROJECT-AGENT-MAP / REPO-UNDERSTANDING）
 
 ---
 
-*最后更新：2026-07-15 · 新增 LOOP-1 批次（S3→S4→S5 质量闭环 LOOP，tests/run_loop.py）；reality-checker 审查通过（3严重+4中等已修复）。*
+*最后更新：2026-07-17 · 发布流程 3 轮迭代（增量计数→重试→保存轮询）全部验证通过，4 张图片零失败；合规检测闭环接入 write_stage；烽火情报风格落地。*

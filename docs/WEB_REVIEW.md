@@ -185,7 +185,7 @@
 
 ## 八、2026-07-14 更新：已完成事项
 
-自初评以来已完成以下工作（详见 `docs/plans/2026-07-14-full-audit-plan.md` + `docs/plans/2026-07-14-ui-redesign-plan.md`）：
+自初评以来已完成以下工作（详见 `docs/AgentsWorkSpace/项目经理/2026-07-14-full-audit-plan.md` + `docs/AgentsWorkSpace/项目经理/2026-07-14-ui-redesign-plan.md`）：
 
 | 事项 | 初评状态 | 当前状态 |
 |------|---------|---------|

@@ -69,6 +69,20 @@ except Exception:
 # ── Phase 3 编排层（已抽至 backend/write_stage.py）──
 from write_stage import research_and_write as _research_and_write_impl, PipelineHooks as _PipelineHooks
 
+# ── 发布服务（懒加载，避免 patchright 依赖阻断流水线）──
+_publisher_imported = False
+
+
+def _get_publisher():
+    """懒加载发布服务模块（patchright/playwright 非流水线运行时必需）。"""
+    global _publisher_imported
+    if not _publisher_imported:
+        from publisher_service import publish_article, check_login_status, launch_login_browser
+        _publisher_imported = True
+        return publish_article, check_login_status, launch_login_browser
+    from publisher_service import publish_article, check_login_status, launch_login_browser
+    return publish_article, check_login_status, launch_login_browser
+
 # ── 页面配置 ──
 st.set_page_config(
     page_title="AIToutiao 引擎模式",
@@ -126,7 +140,10 @@ _DEFAULTS = {
     "pipeline_error": None,  # 后台线程异常信息
     "pipeline_done": False,  # 后台线程完成标记
     "log_file_path": "",     # 本次运行的日志文件绝对路径（持久化落盘）
-    # Cookies 相关已不再需要 — 使用 Playwright 浏览器全自动下载
+    # 发布状态
+    "publish_result": None,       # 上次发布结果 dict
+    "publish_running": False,     # 发布进行中标记
+    "login_verified": None,       # 登录验证结果缓存（None=未检查）
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -1555,23 +1572,12 @@ def _assemble_article_with_images(state, cover_path: Optional[str], inline_paths
             _sys.stderr.write(f"[assemble] 封面图文件缺失，跳过注入: {cover_file.name}\n"); _sys.stderr.flush()
             add_log(f"封面图文件缺失: {cover_file.name}，跳过注入", "warning")
 
-    # ── 规整：剥离流水线元数据 + 只保留首个 # 文章标题 ──
+    # ── 规整：剥离流水线元数据（# 标题保留，发布阶段 publisher_service 自行去重）──
     # (a) 剥离末尾 "---" 分隔 + "*第N轮 | 评分…*" 元数据块
     content = re.sub(r"\n*---\n*\*[^*\n]*\*", "", content)
-    # (b) 只保留首个 # 文章标题（"# "，非 "## "章节）
-    _lines = content.split("\n")
-    _first_title = False
-    _kept = []
-    for _ln in _lines:
-        if _ln.startswith("# "):
-            if _first_title:
-                continue
-            _first_title = True
-        _kept.append(_ln)
-    content = "\n".join(_kept).strip()
-    # (c) 剥离 LLM 在 S3 自发产生的整行话题标签（形如 "#无人机战争 #AI改变战场"，# 后无空格）
+    # (b) 剥离 LLM 在 S3 自发产生的整行话题标签（形如 "#无人机战争 #AI改变战场"，# 后无空格）
     content = re.sub(r"(?m)^\s*#\S+(?:\s+#\S+)*\s*$", "", content)
-    # (d) 清理因删除标签行产生的连续空行（≥3 换行压成 2 个）
+    # (c) 清理因删除标签行产生的连续空行（≥3 换行压成 2 个）
     content = re.sub(r"\n{3,}", "\n\n", content)
 
     # ── 写回：只在阶段5 生成「完整稿件_配图版.md」──
@@ -1807,6 +1813,7 @@ def render_sidebar():
         style = st.selectbox(
             "内容风格",
             options=[
+                ("fenghuo_qingbao", "🗡️ 烽火情报（专业锐评型）"),
                 ("baoming_shuo", "🔥 包明说（反差悬念型）"),
                 ("jin_shuo", "📚 晋说（乡愁叙事型）"),
                 ("global_archive", "🏛️ 全球档案馆（馆长悬疑型）"),
@@ -2024,7 +2031,8 @@ def render_main():
     if clear_btn:
         log_sink.reset()
         for k in ("logs", "result_data", "pipeline_state", "run_id", "processed_url",
-                  "pipeline_error", "pipeline_done"):
+                  "pipeline_error", "pipeline_done",
+                  "publish_result", "publish_running", "login_verified"):
             st.session_state[k] = _DEFAULTS[k]
         for s_name in st.session_state.stage_status:
             st.session_state.stage_status[s_name] = "pending"
@@ -2098,6 +2106,164 @@ def render_logs():
     st.markdown("\n".join(html_lines), unsafe_allow_html=True)
     if len(logs) >= 500:
         st.caption("💡 界面仅显示最近 500 行，完整日志见 `log/` 目录")
+
+
+# ============================================================
+# UI 发布
+# ============================================================
+def render_publish():
+    """渲染发布 Tab — 将流水线产出发布到今日头条。
+
+    依赖 super-publisher 方案：Markdown 图片转为占位符 → 剪贴板 + Ctrl+V 粘贴，
+    解决头条编辑器图片不渲染问题。正文不含 # 标题行（S5 已剥离）。
+    """
+    result = st.session_state.result_data
+
+    if not result:
+        st.markdown(
+            '<div class="empty-state" style="padding:64px 16px;">'
+            '<div style="font-size:48px;margin-bottom:16px;opacity:0.5;">🚀</div>'
+            '<p style="margin:0 0 8px;font-size:16px;font-weight:600;color:var(--text);">暂无成果可发布</p>'
+            '<p style="margin:0 0 4px;font-size:13px;color:var(--text-secondary);">'
+            '在工作台生成文章后，</p>'
+            '<p style="margin:0;font-size:13px;color:var(--text-secondary);">可在此一键发布到今日头条</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    title = result.get("title", "")
+    content = result.get("content", "")
+    run_dir = result.get("run_dir", "")
+    cover_image = result.get("cover_image", "")
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🚀 发布到今日头条</div>', unsafe_allow_html=True)
+
+    # ── 标题 + 封面预览 ──
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.text_input("文章标题", value=title, key="publish_title_preview",
+                       disabled=True, label_visibility="collapsed",
+                       placeholder="标题（由流水线 S3 生成）")
+    with col2:
+        if cover_image and Path(cover_image).exists():
+            st.image(str(cover_image), caption="封面预览", use_container_width=True)
+
+    # ── 内容预览 ──
+    char_count = result.get("char_count", len(content))
+    with st.expander(f"📄 内容预览（{char_count} 字符）", expanded=False):
+        st.caption("正文不含标题行（已由 S5 阶段剥离，标题由 publish 阶段独立填写）")
+        st.text(content[:800] + ("..." if len(content) > 800 else ""))
+
+    # ── 发布选项 ──
+    col1, col2 = st.columns(2)
+    with col1:
+        headless = st.checkbox(
+            "无头模式", value=False, key="publish_headless",
+            help="后台运行浏览器（不显示窗口），调试时建议关闭",
+        )
+    with col2:
+        inline_count = len(result.get("inline_images", []))
+        img_info = f"{inline_count + 1} 张图片" if inline_count else "仅封面"
+        st.metric("配图", img_info)
+        st.caption(f"Run: `{result.get('run_id', '')[:16]}...`")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── 登录状态检查 ──
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🔐 登录状态</div>', unsafe_allow_html=True)
+
+    if st.button("🔍 验证登录状态", key="btn_check_login"):
+        with st.spinner("正在验证登录..."):
+            try:
+                publish_article_fn, check_login_fn, launch_login_fn = _get_publisher()
+                status = check_login_fn()
+                st.session_state.login_verified = status.get("authenticated", False)
+            except ImportError as e:
+                st.error(f"缺少发布依赖: {e}。请 `pip install patchright`")
+                st.session_state.login_verified = False
+            except Exception as e:
+                st.error(f"验证失败: {e}")
+                st.session_state.login_verified = False
+
+    login_ok = st.session_state.get("login_verified", None)
+
+    if login_ok is True:
+        st.success("✅ 已登录头条后台，可以发布")
+    elif login_ok is False:
+        st.warning("⚠️ 未登录或登录已过期")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔐 打开登录页面", use_container_width=True):
+                try:
+                    _, _, launch_login_fn = _get_publisher()
+                    success = launch_login_fn(headless=False, timeout_minutes=5)
+                    if success:
+                        st.session_state.login_verified = True
+                        st.rerun()
+                    else:
+                        st.error("登录失败或超时")
+                except Exception as e:
+                    st.error(f"登录失败: {e}")
+    else:
+        st.info("点击上方按钮验证登录状态")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── 发布按钮 ──
+    st.markdown("---")
+    publish_disabled = (
+        st.session_state.get("publish_running", False)
+        or not login_ok
+        or not title
+        or not content
+    )
+    hint = ""
+    if not login_ok:
+        hint = "（请先验证登录状态）"
+    elif not content:
+        hint = "（暂无可发布内容）"
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button(
+            f"📝 填写到头条编辑器 {hint}",
+            type="primary",
+            use_container_width=True,
+            disabled=publish_disabled,
+            key="btn_publish",
+        ):
+            st.session_state.publish_running = True
+            st.session_state.publish_result = None
+
+            with st.spinner("⏳ 启动浏览器，正在填写内容…（请勿关闭页面）"):
+                try:
+                    publish_article_fn, _, _ = _get_publisher()
+                    pub_result = publish_article_fn(
+                        title=title,
+                        content=content,
+                        cover_path=str(cover_image) if cover_image and Path(cover_image).exists() else None,
+                        content_base_dir=run_dir,
+                        headless=headless,
+                    )
+                    st.session_state.publish_result = pub_result
+                except Exception as e:
+                    st.session_state.publish_result = {"success": False, "message": f"发布异常: {e}"}
+                finally:
+                    st.session_state.publish_running = False
+
+            st.rerun()
+
+    # ── 发布结果展示 ──
+    pub_result = st.session_state.get("publish_result")
+    if pub_result:
+        if pub_result.get("success"):
+            st.success(f"✅ {pub_result.get('message', '发布成功')}")
+            st.caption("请前往 [mp.toutiao.com](https://mp.toutiao.com) 查看草稿箱或已发布文章")
+        else:
+            st.error(f"❌ {pub_result.get('message', '发布失败')}")
 
 
 # ============================================================
@@ -2281,10 +2447,10 @@ def main():
     # 把后台线程写入 ui.log_sink 的状态同步到 st.session_state（本 run 起点）
     _sync_ui_state_to_session()
 
-    # ── 顶部 Tab：工作台 / 成果（2 Tab，配置已归入 Sidebar） ──
+    # ── 顶部 Tab：工作台 / 成果 / 发布（3 Tab，配置已归入 Sidebar） ──
 
-    tab_monitor, tab_results = st.tabs(
-        ["🎯 工作台", "📊 成果"]
+    tab_monitor, tab_results, tab_publish = st.tabs(
+        ["🎯 工作台", "📊 成果", "🚀 发布"]
     )
 
     with tab_monitor:
@@ -2379,6 +2545,9 @@ def main():
             if st.session_state.pipeline_error:
                 st.error(f"流水线执行异常: {st.session_state.pipeline_error}")
 
+
+    with tab_publish:
+        render_publish()
 
     with tab_results:
         render_results()

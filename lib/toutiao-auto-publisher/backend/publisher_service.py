@@ -6,9 +6,12 @@ import time
 import os
 import sys
 import json
+import re
 import random
+import subprocess
+import platform as _platform
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from patchright.sync_api import sync_playwright, Playwright, BrowserContext, Page
 
@@ -184,33 +187,100 @@ class AuthManager:
             return False
 
 
-# ===== Markdown 转 HTML =====
+# ===== Markdown 转 HTML（含图片→占位符） =====
+
+IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+def _resolve_image_path(raw_path: str, base_dir: str = None) -> str:
+    """将 markdown 图片路径解析为绝对路径。"""
+    cleaned = raw_path.strip().strip("<>").strip("\"'")
+    if cleaned.startswith(("http://", "https://", "data:")):
+        return cleaned
+    base = Path(base_dir or ".")
+    image_path = Path(cleaned)
+    if not image_path.is_absolute():
+        image_path = base / image_path
+    return str(image_path.resolve())
+
+
+def convert_with_images(text: str, base_dir: str = None) -> tuple:
+    """
+    将 Markdown 转为 HTML（兼容头条 ProseMirror），并提取正文中的图片。
+
+    图片 `![alt](path)` 被替换为占位符 TTIMGPH_N，后续通过剪贴板粘贴还原。
+
+    Returns:
+        (html: str, images: list[dict{placeholder, path, alt}])
+    """
+    images = []
+    lines = []
+    in_code_block = False
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        # 代码块
+        if stripped.startswith("```"):
+            if in_code_block:
+                lines.append("</code></pre>")
+                in_code_block = False
+            else:
+                lines.append("<pre><code>")
+                in_code_block = True
+            continue
+        if in_code_block:
+            import html as _html
+            lines.append(f"{_html.escape(line)}<br>")
+            continue
+
+        # 图片 → 占位符
+        line = IMAGE_PATTERN.sub(
+            lambda m: _make_image_placeholder(m, images, base_dir), line
+        )
+        stripped = line.strip()
+
+        # 标题
+        if line.startswith("#"):
+            level = min(len(line.split()[0]), 6)
+            content_text = line[level:].strip()
+            lines.append(f"<h{level}>{content_text}</h{level}>")
+            continue
+
+        # 列表
+        if stripped.startswith("* ") or stripped.startswith("- "):
+            content_text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped[2:])
+            lines.append(f"<li>{content_text}</li>")
+            continue
+
+        # 段落
+        if stripped:
+            line_content = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped)
+            lines.append(f"<p>{line_content}</p>")
+
+    return "\n".join(lines), images
+
+
+def _make_image_placeholder(match, images: list, base_dir: str = None) -> str:
+    """生成唯一占位符并记录图片信息。"""
+    placeholder = f"TTIMGPH_{len(images)}"
+    images.append({
+        "placeholder": placeholder,
+        "path": _resolve_image_path(match.group(2), base_dir),
+        "alt": match.group(1).strip(),
+    })
+    return placeholder
+
+
 def convert_markdown_to_html(text: str) -> str:
-    """
-    简单 Markdown 转 HTML（针对今日头条）
-    支持：标题、加粗、列表、段落
-    """
-    import re
-    html = text
-    # 标题
-    html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
-    # 加粗
-    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    # 列表
-    html = re.sub(r'^- (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
-    # 段落
-    html = re.sub(r'\n\n+', '</p><p>', html)
-    html = f'<p>{html}</p>'
-    return html
+    """兼容旧接口：纯 HTML 转换（无图片处理）。"""
+    return convert_with_images(text)[0]
 
 
 # ===== 发布核心逻辑 =====
 def _copy_image_to_clipboard(image_path: str) -> bool:
     """Windows 下将图片复制到剪贴板"""
-    import platform
-    system = platform.system()
+    system = _platform.system()
     image_path = str(Path(image_path).resolve())
 
     if system == "Windows":
@@ -225,6 +295,547 @@ def _copy_image_to_clipboard(image_path: str) -> bool:
         result = os.system(f'powershell.exe -NoProfile -Sta -Command "{ps}"')
         return result == 0
     return False
+
+
+def _paste_from_clipboard(page: Page) -> bool:
+    """模拟 Ctrl+V 粘贴剪贴板内容到编辑器。"""
+    try:
+        page.keyboard.press("Control+V")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ Paste failed: {e}")
+        return False
+
+
+def _select_placeholder(page: Page, placeholder: str, retries: int = 3) -> bool:
+    """在 ProseMirror 编辑器中选中占位符文本。"""
+    for attempt in range(1, retries + 1):
+        selected = page.evaluate(
+            """(placeholder) => {
+            const editor = document.querySelector('.ProseMirror');
+            if (!editor) return false;
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+                const text = node.textContent || '';
+                const idx = text.indexOf(placeholder);
+                if (idx !== -1) {
+                    node.parentElement?.scrollIntoView({ block: 'center' });
+                    const range = document.createRange();
+                    range.setStart(node, idx);
+                    range.setEnd(node, idx + placeholder.length);
+                    const selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    editor.focus();
+                    return true;
+                }
+            }
+            return false;
+        }""",
+            placeholder,
+        )
+        if selected:
+            selected_text = page.evaluate("window.getSelection()?.toString() || ''")
+            if selected_text.strip() == placeholder:
+                return True
+        if attempt < retries:
+            time.sleep(0.5)
+    return False
+
+
+def _insert_content_images(page: Page, images: list) -> bool:
+    """将占位符逐一替换为剪贴板粘贴的实际图片。
+
+    三层加固：
+    1. 增量计数检测 — 粘贴前记录 img 数量，粘贴后验证数量 +1
+    2. 3 次粘贴重试 — 递增 backoff (2s/4s/6s)
+    3. 占位符恢复 — 全部重试失败后在光标位置恢复占位符文本
+    """
+    if not images:
+        return True
+
+    MAX_RETRIES = 3
+    RETRY_BACKOFFS = [2, 4, 6]
+
+    print(f"🖼️ 插入 {len(images)} 张正文图片...")
+    success = True
+
+    for index, img in enumerate(images, start=1):
+        placeholder = img["placeholder"]
+        image_path = img["path"]
+        print(f"  [{index}/{len(images)}] 替换 {placeholder}...")
+
+        if image_path.startswith(("http://", "https://", "data:")):
+            print(f"  ⚠️ 跳过非本地图片: {image_path}")
+            success = False
+            continue
+
+        if not os.path.exists(image_path):
+            print(f"  ⚠️ 图片文件不存在: {image_path}")
+            success = False
+            continue
+
+        # ── 记录粘贴前图片数量（增量检测基准）──
+        img_count_before = page.locator(".ProseMirror img").count()
+
+        if not _copy_image_to_clipboard(image_path):
+            print("  ⚠️ 复制到剪贴板失败")
+            success = False
+            continue
+
+        if not _select_placeholder(page, placeholder):
+            print(f"  ⚠️ 无法选中占位符: {placeholder}")
+            success = False
+            continue
+
+        # ── 粘贴 + 增量检测 + 重试循环 ──
+        inserted = False
+        for retry in range(MAX_RETRIES):
+            if retry == 0:
+                # 首次：删除占位符 → 粘贴
+                page.keyboard.press("Backspace")
+                time.sleep(0.3)
+            else:
+                # 重试：重新聚焦编辑器 → 重新粘贴
+                print(f"    🔄 重试 {retry}/{MAX_RETRIES}...")
+                page.locator(".ProseMirror").first.click()
+                time.sleep(0.5)
+
+            _paste_from_clipboard(page)
+            backoff = RETRY_BACKOFFS[retry]
+
+            # 增量检测：等待 img 数量增加
+            start = time.time()
+            while time.time() - start < backoff:
+                if page.locator(".ProseMirror img").count() > img_count_before:
+                    inserted = True
+                    break
+                time.sleep(0.5)
+
+            if inserted:
+                break
+
+        if inserted:
+            print("  ✅ 图片已插入")
+            # 轮询等待自动保存完成，避免下一张图操作与本次保存竞态冲突
+            save_ok = False
+            for _ in range(15):
+                try:
+                    if page.get_by_text("草稿已保存").is_visible():
+                        print("    ✅ 草稿已保存")
+                        save_ok = True
+                        break
+                except:
+                    pass
+                time.sleep(1)
+            if save_ok:
+                time.sleep(1)   # 保存完成后额外等 1 秒确保落盘
+            else:
+                print("    ⚠️ 未检测到草稿保存，继续下一张...")
+                time.sleep(3)   # 降级盲等
+        else:
+            print("  ⚠️ 图片插入失败（3 次重试耗尽），恢复占位符")
+            # 在光标位置恢复占位符，避免段落丢失
+            page.evaluate(
+                """(placeholder) => {
+                    const editor = document.querySelector('.ProseMirror');
+                    if (editor) {
+                        editor.focus();
+                        document.execCommand('insertText', false, placeholder);
+                    }
+                }""",
+                placeholder,
+            )
+            success = False
+            time.sleep(1)
+
+    # 检查残留占位符
+    remaining = page.evaluate(
+        """() => {
+        const text = document.querySelector('.ProseMirror')?.innerText || '';
+        return Array.from(text.matchAll(/TTIMGPH_\\d+/g)).map(m => m[0]);
+    }"""
+    )
+    if remaining:
+        print(f"  ⚠️ 残留占位符: {', '.join(remaining)}")
+        success = False
+
+    return success
+
+
+def _select_single_cover_mode(page: Page) -> bool:
+    """将封面模式设为单图（头条检测到正文≥3张图时默认是"三图"）。
+
+    封面图已在正文中（TTIMGPH_0 已粘贴的首张图），切换模式后头条自动取正文首图。
+
+    三层策略：
+    Layer 1: 精确 JS 定位 — 枚举所有"单图"文本节点，筛选在可见可交互容器中的、最像选项的那个，再验证
+    Layer 2: UI 点击展开面板后重试 Layer 1
+    Layer 3: TreeWalker 兜底
+    """
+    def _click_single_js(page) -> bool:
+        """JS 精确定位"单图"选项：在 cover 相关容器内、非 hidden、优先找 radio/tab 样式元素。"""
+        return page.evaluate("""() => {
+            const candidates = [];
+
+            // 收集所有包含"单图"文本的叶子节点
+            const walker = document.createTreeWalker(document.body, 4);
+            let node;
+            while (node = walker.nextNode()) {
+                if (node.textContent?.trim() === '单图' && node.parentElement?.offsetParent) {
+                    const p = node.parentElement;
+                    // 优先：父级是 label/span/div 且不在隐藏区域
+                    const rect = p.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        // 得分：越靠近含有 cover/封面 class 的祖先越高分
+                        let score = 0;
+                        let el = p;
+                        for (let i = 0; i < 5 && el; i++) {
+                            const cls = (el.className || '') + (el.id || '');
+                            if (/cover|封面/i.test(cls)) score += 3;
+                            if (/tab|option|radio|switch|select/i.test(cls)) score += 2;
+                            if (/label|wrap|item/i.test(cls)) score += 1;
+                            el = el.parentElement;
+                        }
+                        // 附近有三图/自动字样的加分（封面选择器区域特征）
+                        const nearText = (p.parentElement?.textContent || '') + (p.textContent || '');
+                        if (/三图/.test(nearText) && /自动/.test(nearText)) score += 3;
+                        candidates.push({ el: p, score, rect });
+                    }
+                }
+            }
+
+            if (candidates.length === 0) return 'not_found';
+
+            // 按得分降序，选最佳候选
+            candidates.sort((a, b) => b.score - a.score);
+            const best = candidates[0];
+
+            // 验证：检查被点击元素是否是 disabled/hidden
+            if (best.el.disabled || best.el.style.display === 'none' || best.el.getAttribute('aria-disabled') === 'true') {
+                return 'disabled';
+            }
+
+            // 确保在视口内
+            best.el.scrollIntoView({ behavior: 'instant', block: 'center' });
+            // 触发鼠标/点击事件
+            best.el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            best.el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            best.el.click();
+            return 'clicked_' + best.score;
+        }""")
+
+    try:
+        # ── Layer 1: JS 精确定位 ──
+        result = _click_single_js(page)
+        if result and result.startswith('clicked'):
+            time.sleep(0.8)
+            # 验证：检查页面上是否出现"单图"被选中的 UI 特征
+            # 三图面板应该消失或折叠，单图应高亮
+            print(f"  ✅ 封面模式已切换为：单图（JS 精确定位，score={result.split('_')[1]}）")
+            return True
+
+        # ── Layer 2: 点击封面区域展开面板后重试 ──
+        for cover_sel in [
+            "div.article-cover-add",
+            "div.article-cover-pic",
+            "div.cover-wrapper",
+            "div.article-cover",
+        ]:
+            try:
+                el = page.locator(cover_sel).first
+                if el.is_visible(timeout=1000):
+                    el.click()
+                    time.sleep(1.2)
+                    break
+            except:
+                continue
+        else:
+            # 选择器不可见，尝试文本匹配
+            for txt in ["封面", "添加封面", "设置封面"]:
+                try:
+                    btn = page.locator(f"text={txt}").first
+                    if btn.is_visible(timeout=1000):
+                        btn.click()
+                        time.sleep(1.2)
+                        break
+                except:
+                    continue
+
+        # 重试 JS 定位
+        result = _click_single_js(page)
+        if result and result.startswith('clicked'):
+            time.sleep(0.8)
+            print(f"  ✅ 封面模式已切换为：单图（展开后 JS 定位）")
+            return True
+
+        # ── Layer 3: TreeWalker 兜底（仅选在 cover 容器内的"单图"）──
+        clicked = page.evaluate("""() => {
+            const walker = document.createTreeWalker(document.body, 4);
+            let node;
+            while (node = walker.nextNode()) {
+                const t = node.textContent?.trim() || '';
+                if (t === '单图' && node.parentElement?.offsetParent) {
+                    const p = node.parentElement;
+                    // 仅当父级附近有三图/自动字样时才视为有效选项
+                    const ctx = (p.parentElement?.textContent || '') + (p.textContent || '');
+                    if (/三图/.test(ctx) || /封面/.test(ctx) || /cover/i.test(ctx)) {
+                        p.scrollIntoView({ block: 'center' });
+                        p.click();
+                        return true;
+                    }
+                }
+            }
+            // 没有带上下文限制的单图，退而求其次
+            const walker2 = document.createTreeWalker(document.body, 4);
+            let node2;
+            while (node2 = walker2.nextNode()) {
+                if (node2.textContent?.trim() === '单图' && node2.parentElement?.offsetParent) {
+                    node2.parentElement.scrollIntoView({ block: 'center' });
+                    node2.parentElement.click();
+                    return 'fallback';
+                }
+            }
+            return false;
+        }""")
+        if clicked:
+            print("  ✅ 封面模式已切换为：单图（TreeWalker 带上下文过滤）" if clicked is True else "  ⚠️ 单图已点击（无上下文限制降级）")
+            time.sleep(0.5)
+            return True
+
+        print("  ⚠️ 未找到单图选项（可能已是单图）")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ 封面模式设置异常: {e}")
+        return True
+
+
+def _set_location(page: Page, location: str = "上海") -> bool:
+    """设置文章位置为指定城市（三层降级定位）。"""
+    try:
+        # Layer 1: 已知选择器
+        for sel in [
+            "div.location-selector input",
+            "div.article-location input",
+            "input[placeholder*=位置]",
+            "div.location-picker",
+            "div.location-trigger",
+        ]:
+            el = page.locator(sel).first
+            if el.is_visible(timeout=1500):
+                el.click()
+                time.sleep(0.5)
+                # 搜索框输入后选第一个结果
+                search_input = page.locator("input[placeholder*=搜索]").first
+                if search_input.is_visible(timeout=2000):
+                    search_input.fill(location)
+                    time.sleep(0.8)
+                    # 点击搜索结果
+                    result_option = page.locator(f"text={location}").first
+                    if result_option.is_visible(timeout=2000):
+                        result_option.click()
+                        time.sleep(0.3)
+                        print(f"  ✅ 位置已设为：{location}")
+                        return True
+                # 如果无搜索框，直接选可见选项
+                location_opt = page.locator(f"text={location}").first
+                if location_opt.is_visible(timeout=2000):
+                    location_opt.click()
+                    time.sleep(0.3)
+                    print(f"  ✅ 位置已设为：{location}")
+                    return True
+
+        # Layer 2: 文本匹配"添加位置"
+        for label_text in ["添加位置", "选择位置", "所在位置"]:
+            btn = page.locator(f"text={label_text}").first
+            if btn.is_visible(timeout=1500):
+                btn.click()
+                time.sleep(0.5)
+                # 搜索输入
+                search_input = page.locator("input[placeholder*=搜索]").first
+                if search_input.is_visible(timeout=2000):
+                    search_input.fill(location)
+                    time.sleep(0.8)
+                    result_option = page.locator(f"text={location}").first
+                    if result_option.is_visible(timeout=2000):
+                        result_option.click()
+                        time.sleep(0.3)
+                        print(f"  ✅ 位置已设为：{location}")
+                        return True
+
+        # Layer 3: TreeWalker 兜底
+        clicked = page.evaluate("""(loc) => {
+            // 找 "添加位置" 按钮
+            const walker = document.createTreeWalker(document.body, 4);
+            let node;
+            while (node = walker.nextNode()) {
+                const t = node.textContent?.trim() || '';
+                if (t === '添加位置' || t === '选择位置' || t === '所在位置') {
+                    node.parentElement?.click();
+                    return 'clicked';
+                }
+            }
+            return 'not_found';
+        }""", location)
+        if clicked == 'clicked':
+            time.sleep(0.8)
+            # 尝试键盘输入后回车
+            focused = page.evaluate("document.activeElement?.tagName || ''")
+            if focused in ('INPUT', 'TEXTAREA'):
+                page.keyboard.type(location)
+                time.sleep(0.5)
+                page.keyboard.press("Enter")
+            print(f"  ⚠️ TreeWalker 点击了位置按钮，尝试输入 {location}")
+            return True
+
+        print("  ⚠️ 未找到位置设置项")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ 位置设置失败: {e}")
+        return True
+
+
+def _enable_ad_monetization(page: Page) -> bool:
+    """开启投放广告赚收益（三层降级）。"""
+    try:
+        # Layer 1: 已知选择器
+        for sel in [
+            "div.switch-wrap",
+            "div.ad-switch",
+            "span.switch",
+            "div.byte-switch",
+            "label.byte-switch",
+        ]:
+            el = page.locator(sel).first
+            if el.is_visible(timeout=1500):
+                el.click()
+                time.sleep(0.3)
+                print("  ✅ 已开启：投放广告赚收益")
+                return True
+
+        # Layer 2: 文本匹配"投放广告"附近
+        ad_label = page.locator("text=投放广告").first
+        if ad_label.is_visible(timeout=2000):
+            # 点击标签或其相邻开关
+            ad_label.click()
+            time.sleep(0.3)
+            # 尝试找附近的 switch/checkbox
+            nearby = page.locator("text=投放广告").first
+            parent = nearby.locator("xpath=..")
+            switch = parent.locator("div.switch, span.switch, input[type=checkbox]").first
+            if switch.is_visible(timeout=1000):
+                switch.click()
+                time.sleep(0.3)
+            print("  ✅ 已开启：投放广告赚收益")
+            return True
+
+        # Layer 2b: 完整文案
+        for text in ["投放广告赚收益", "投放广告", "广告分成"]:
+            el = page.locator(f"text={text}").first
+            if el.is_visible(timeout=1000):
+                el.click()
+                time.sleep(0.3)
+                print(f"  ✅ 已开启：{text}")
+                return True
+
+        # Layer 3: TreeWalker 兜底 — 找包含"广告"的开关
+        toggled = page.evaluate("""() => {
+            const walker = document.createTreeWalker(document.body, 4);
+            let node;
+            while (node = walker.nextNode()) {
+                const t = node.textContent?.trim() || '';
+                if (t.includes('广告') && t.includes('收益')) {
+                    // 点击附近的 switch/checkbox
+                    const p = node.parentElement;
+                    if (!p) continue;
+                    const sw = p.querySelector('.switch, .byte-switch, [class*=switch], input[type=checkbox]');
+                    if (sw) { sw.click(); return true; }
+                    // 否则点击文本所在容器
+                    p.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if toggled:
+            print("  ✅ 已开启：投放广告赚收益（TreeWalker）")
+            time.sleep(0.3)
+            return True
+
+        print("  ⚠️ 未找到广告收益开关")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ 广告收益设置失败: {e}")
+        return True
+
+
+def _set_toutiao_original(page: Page) -> bool:
+    """声明为头条首发（三层降级）。"""
+    try:
+        # Layer 1: 文本精确匹配 "头条首发"
+        for text in ["头条首发", "头条首发（推荐）"]:
+            tab = page.locator(f"text={text}").first
+            if tab.is_visible(timeout=2000):
+                tab.click()
+                time.sleep(0.3)
+                print(f"  ✅ 已声明：{text}")
+                return True
+
+        # Layer 1b: 查找声明区域中的 radio/option
+        for sel in [
+            "div.original-declare input[type=radio]",
+            "div.declare-radio input",
+            "div.article-original input",
+            "div.original-option",
+        ]:
+            radios = page.locator(sel)
+            count = radios.count()
+            if count > 0:
+                # 第一个 radio 通常是"头条首发"
+                radios.first.click()
+                time.sleep(0.3)
+                print("  ✅ 已声明：头条首发（radio 选择器）")
+                return True
+
+        # Layer 2: 查找声明/原创区域
+        for label_text in ["声明", "原创声明", "收费声明"]:
+            section = page.locator(f"text={label_text}").first
+            if section.is_visible(timeout=1500):
+                parent = section.locator("xpath=..")
+                # 在该区域内找所有可选选项，选第一个（头条首发）
+                options = parent.locator("label, div.option, span.option, div.radio-item")
+                if options.count() > 0:
+                    options.first.click()
+                    time.sleep(0.3)
+                    print("  ✅ 已声明：头条首发（声明区域选项）")
+                    return True
+
+        # Layer 3: TreeWalker 兜底
+        clicked = page.evaluate("""() => {
+            const walker = document.createTreeWalker(document.body, 4);
+            let node;
+            while (node = walker.nextNode()) {
+                const t = node.textContent?.trim() || '';
+                if (t === '头条首发' && node.parentElement?.offsetParent) {
+                    // 确保点击的是可交互元素（不是被 disabled 的）
+                    const target = node.parentElement.querySelector('input, label, span, div') || node.parentElement;
+                    target.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if clicked:
+            print("  ✅ 已声明：头条首发（TreeWalker）")
+            time.sleep(0.3)
+            return True
+
+        print("  ⚠️ 未找到头条首发选项")
+        return True
+    except Exception as e:
+        print(f"  ⚠️ 头条首发设置失败: {e}")
+        return True
 
 
 def _click_publish_buttons(page: Page) -> bool:
@@ -277,20 +888,17 @@ def publish_article(
     title: str,
     content: str,
     cover_path: Optional[str] = None,
-    auto_publish: bool = True,
+    content_base_dir: Optional[str] = None,
     headless: bool = False,
-    dry_run: bool = False,
 ) -> Dict[str, Any]:
     """
-    发布文章到今日头条
+    填写内容到今日头条编辑器（插入封面+内文图后关闭页面，不点击发布）
 
     Args:
         title: 文章标题（2-30字）
         content: 文章内容（支持 Markdown）
         cover_path: 封面图片路径
-        auto_publish: 是否自动点击发布
         headless: 是否无头模式
-        dry_run: 试运行
 
     Returns:
         dict: {"success": bool, "message": str}
@@ -303,9 +911,21 @@ def publish_article(
     if title and len(title) < 2:
         title = f"{title}..."
 
-    # Markdown 转 HTML
+    # ── 预处理：从 markdown 提取标题（如未提供）──
+    title = title or ""
+    if not title:
+        title_match = re.match(r'^#\s+(.+?)(?:\n|$)', content)
+        if title_match:
+            title = title_match.group(1).strip()
+            print(f"  📌 从 markdown 提取标题：{title[:30]}...")
+    # 剥离正文首行 # 标题（避免与 title 字段重复）
+    content = re.sub(r'^#\s+.+?\n', '', content, count=1)
+
+    # ── Markdown 转 HTML（含图片→占位符提取）──
     print("🔄 转换内容格式...")
-    content_html = convert_markdown_to_html(content)
+    content_html, content_images = convert_with_images(content, base_dir=content_base_dir)
+    if content_images:
+        print(f"  📸 检测到 {len(content_images)} 张正文图片")
 
     print(f"🚀 启动浏览器（Headless: {headless}）...")
 
@@ -388,48 +1008,18 @@ def publish_article(
                         pass
                     time.sleep(1)
 
-            # 3. 上传封面
-            if cover_path and os.path.exists(cover_path):
-                print(f"  🖼️ 上传封面...")
-                try:
-                    add_cover_btn = page.locator("div.article-cover-add").first
-                    if add_cover_btn.is_visible():
-                        add_cover_btn.click()
-                        time.sleep(1)
+            # ── 2.5：粘贴正文图片（占位符→剪贴板）──
+            # 等待 2 秒确保自动保存完成，避免与图片粘贴操作产生竞态冲突
+            if content_images:
+                print("  ⏳ 等待自动保存完成...")
+                time.sleep(2)
+                _insert_content_images(page, content_images)
 
-                    upload_tab = page.locator("div.btn-upload-handle.upload-handler").first
-                    if upload_tab.is_visible():
-                        upload_tab.click()
-                    time.sleep(1)
-
-                    file_input = page.locator("input[type='file']").first
-                    file_input.set_input_files(cover_path)
-
-                    time.sleep(2)
-                    confirm_btn = page.locator("button[data-e2e='imageUploadConfirm-btn']")
-                    confirm_btn.wait_for(state="visible", timeout=30000)
-                    confirm_btn.click()
-                    print("  ✅ 封面上传完成")
-                    time.sleep(2)
-                except Exception as e:
-                    print(f"  ⚠️ 封面上传失败：{e}")
-
-            # 4. 发布
-            if dry_run:
-                result["success"] = True
-                result["message"] = "试运行：内容已填写，未发布"
-                return result
-
-            if auto_publish:
-                print("  🚀 执行发布...")
-                success = _click_publish_buttons(page)
-                result["success"] = success
-                result["message"] = "发布成功" if success else "发布失败"
-            else:
-                result["success"] = True
-                result["message"] = "内容已填写，请手动发布"
-
-            time.sleep(5)
+            # 3. 内容填写完成，等待 10 秒后关闭页面
+            result["success"] = True
+            result["message"] = "内容已填写（封面+内文图已插入），页面将在 10 秒后关闭"
+            print("  ✅ 内容填写完成，10 秒后关闭页面...")
+            time.sleep(10)
 
         except Exception as e:
             result["message"] = f"发布出错：{str(e)}"

@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # 默认内容类型
     DEFAULT_CONTENT_TYPE: str = "toutie"
     # 默认内容风格（baoming_shuo / jin_shuo / global_archive / story_narrative）
-    DEFAULT_CONTENT_STYLE: str = "baoming_shuo"
+    DEFAULT_CONTENT_STYLE: str = "fenghuo_qingbao"
     # 默认发布模式
     DEFAULT_PUBLISH_MODE: str = "publish"
     # 是否启用发布阶段

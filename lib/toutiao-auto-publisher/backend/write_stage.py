@@ -21,10 +21,12 @@ from research import (
 from evaluation import evaluate_content, QUALITY_PASS_THRESHOLD
 from models import style_label as _style_label
 from agent.guardrails import InputGuardrail, PolicyGuardrail, OutputGuardrail
+from compliance import check_compliance, fix_compliance
 
 MAX_RESEARCH_ITERATIONS = 3       # 最大研究-重写轮数（取最高分，3 轮后不中断）
 RESEARCH_WRITE_PASS_THRESHOLD = 80  # 研究-写作阶段完成线（高于通用 75）
 CLAIM_PIPELINE_ENABLED = False      # B-2 全量开关。True 时所有流量走 CP（不再支持 A/B）
+COMPLIANCE_MAX_RETRIES = 3          # 合规检测最多重试 3 次，耗尽仍不通过标记 warning 但不阻断
 
 # Claim-Pipeline 专用常量
 _CP_MAX_ITERATIONS = 5              # Claim-Pipeline 模式最大迭代轮数
@@ -622,6 +624,58 @@ def _research_and_write_claim_pipeline(state, hooks, log, stage, progress) -> bo
     content = best_content
     title = best_title
 
+    # ── 合规检测闭环（CP 路径）──
+    cp_style_label = _style_label(state.content_style)
+    cp_compliance_passed = False
+    cp_compliance_warning = False
+    for cp_comp_round in range(1, COMPLIANCE_MAX_RETRIES + 1):
+        _sys.stderr.write(f"[compliance-cp] 第 {cp_comp_round}/{COMPLIANCE_MAX_RETRIES} 轮合规检测\n"); _sys.stderr.flush()
+        log(f"🔍 合规检测 第{cp_comp_round}/{COMPLIANCE_MAX_RETRIES}轮...", "info")
+
+        comp_result = check_compliance(content, title, cp_style_label)
+
+        if comp_result["passed"]:
+            log(f"✅ 合规检测通过 (评分: {comp_result['total_score']}/100)", "success")
+            cp_compliance_passed = True
+            break
+
+        violations = comp_result["violations"]
+        report_text = comp_result.get("report", "")
+        n_violations = len(violations)
+        log(
+            f"⚠️ 发现 {n_violations} 项违规 | 合规评分: {comp_result['total_score']}/100",
+            "warning",
+        )
+        for v in violations:
+            log(f"  └ [{v['severity']}] {v['rule']}: {v['reason'][:80]}", "warning")
+
+        if cp_comp_round >= COMPLIANCE_MAX_RETRIES:
+            log(f"合规检测已达最大重试次数({COMPLIANCE_MAX_RETRIES})，标记警告继续", "warning")
+            cp_compliance_warning = True
+            break
+
+        log(f"🔧 合规修复重写中...", "info")
+        fixed_content = fix_compliance(content, title, report_text, cp_style_label)
+
+        re_eval = evaluate_content(
+            fixed_content, title, cp_style_label,
+            threshold=RESEARCH_WRITE_PASS_THRESHOLD,
+        )
+        if re_eval["score"] < best_score - 10:
+            log(
+                f"合规修复后质量下降 (原始{best_score}→修复{re_eval['score']})，保留修复前版本",
+                "warning",
+            )
+            cp_compliance_warning = True
+            break
+        else:
+            content = fixed_content
+            best_score = re_eval["score"]
+            log(f"合规修复完成 | 修复后质量评分: {best_score}/100", "success")
+
+    if cp_compliance_warning:
+        state.outputs["compliance_warning"] = True
+
     # 输出护栏
     _policy_res = PolicyGuardrail().check(content)
     if not _policy_res.passed and _policy_res.severity == "error":
@@ -984,6 +1038,63 @@ def research_and_write(state, hooks: Optional[PipelineHooks] = None) -> bool:
         log("所有轮次均未生成有效内容", "error")
         stage("研究写作", "failed")
         return False
+
+    # ── 3.5. 合规检测闭环（头条平台规则审查 → 违规修复重写 → 再检测）──
+    style_label = _style_label(state.content_style)
+    compliance_passed = False
+    compliance_warning = False
+    for comp_round in range(1, COMPLIANCE_MAX_RETRIES + 1):
+        _sys.stderr.write(f"[compliance] 第 {comp_round}/{COMPLIANCE_MAX_RETRIES} 轮合规检测\n"); _sys.stderr.flush()
+        log(f"🔍 合规检测 第{comp_round}/{COMPLIANCE_MAX_RETRIES}轮...", "info")
+
+        comp_result = check_compliance(best_content, best_title, style_label)
+
+        if comp_result["passed"]:
+            log(f"✅ 合规检测通过 (评分: {comp_result['total_score']}/100)", "success")
+            compliance_passed = True
+            break
+
+        # 违规 → 记录并尝试修复
+        violations = comp_result["violations"]
+        report_text = comp_result.get("report", "")
+        n_violations = len(violations)
+        log(
+            f"⚠️ 发现 {n_violations} 项违规 | "
+            f"合规评分: {comp_result['total_score']}/100",
+            "warning",
+        )
+        for v in violations:
+            log(f"  └ [{v['severity']}] {v['rule']}: {v['reason'][:80]}", "warning")
+
+        if comp_round >= COMPLIANCE_MAX_RETRIES:
+            log(f"合规检测已达最大重试次数({COMPLIANCE_MAX_RETRIES})，标记警告继续", "warning")
+            compliance_warning = True
+            break
+
+        # 调用 LLM 修复重写
+        log(f"🔧 合规修复重写中...", "info")
+        fixed_content = fix_compliance(best_content, best_title, report_text, style_label)
+
+        # 修复后质量防退化校验
+        re_eval = evaluate_content(
+            fixed_content, best_title, style_label,
+            threshold=RESEARCH_WRITE_PASS_THRESHOLD,
+        )
+        if re_eval["score"] < best_score - 10:
+            log(
+                f"合规修复后质量下降 (原始{best_score}→修复{re_eval['score']})，"
+                f"超过退化阈值10分，保留修复前版本",
+                "warning",
+            )
+            compliance_warning = True
+            break
+        else:
+            best_content = fixed_content
+            best_score = re_eval["score"]
+            log(f"合规修复完成 | 修复后质量评分: {best_score}/100", "success")
+
+    if compliance_warning:
+        state.outputs["compliance_warning"] = True
 
     # ── 4. 保存输出 + 护栏检查 ──
     if not _save_outputs(state, best_content, best_title, best_score, best_iteration,

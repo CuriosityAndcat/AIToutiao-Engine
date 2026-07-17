@@ -14,14 +14,15 @@ class ContentType(str, Enum):
 class ContentStyle(str, Enum):
     """内容风格枚举 — 对标 docs/风格分析 中 4 位头部作者（去AI味仿写方案）。
 
-    默认风格为 BAOMING_SHUO（包明说，去AI味评分最高 85.0）。
+    默认风格为 FENGHUO_QINGBAO（烽火情报，专业锐评型）。
     GENERAL 仅作代码层回退（未知风格 / 文章通用），不在 UI 选择器暴露。
     """
-    BAOMING_SHUO = "baoming_shuo"            # 🔥 包明说：反差+悬念+短句机枪感+数据佐证（默认）
-    JIN_SHUO = "jin_shuo"                    # 📚 晋说：悬念+数字+乡愁叙事+口语吐槽
-    GLOBAL_ARCHIVE = "global_archive"        # 🏛️ 全球档案馆：自称馆长、悬念+数据+情绪推演
-    STORY_NARRATIVE = "story_narrative"      # 📖 听风的蚕：军事评书，悬念铺陈+通俗比喻
-    GENERAL = "general"                      # 📝 通用风格（代码层回退，不在 UI 暴露）
+    FENGHUO_QINGBAO = "fenghuo_qingbao"        # 🗡️ 烽火情报：反差悬念+短句节奏+数据佐证+专业克制（默认）
+    BAOMING_SHUO = "baoming_shuo"               # 🔥 包明说：反差+悬念+短句机枪感+数据佐证
+    JIN_SHUO = "jin_shuo"                       # 📚 晋说：悬念+数字+乡愁叙事+口语吐槽
+    GLOBAL_ARCHIVE = "global_archive"           # 🏛️ 全球档案馆：自称馆长、悬念+数据+情绪推演
+    STORY_NARRATIVE = "story_narrative"         # 📖 听风的蚕：军事评书，悬念铺陈+通俗比喻
+    GENERAL = "general"                         # 📝 通用风格（代码层回退，不在 UI 暴露）
 
 
 def style_label(style_value) -> str:
@@ -31,6 +32,7 @@ def style_label(style_value) -> str:
     """
     s = style_value.value if hasattr(style_value, "value") else str(style_value)
     mapping = {
+        "fenghuo_qingbao": "烽火情报（专业锐评型）",
         "baoming_shuo": "包明说（反差悬念型）",
         "jin_shuo": "晋说（乡愁叙事型）",
         "global_archive": "全球档案馆（馆长悬疑型）",
@@ -63,7 +65,7 @@ class PublishRequest(BaseModel):
     title: str
     content: str
     cover_path: Optional[str] = None
-    auto_publish: bool = True
+    content_base_dir: Optional[str] = None
     content_type: ContentType = ContentType.ARTICLE
 
 

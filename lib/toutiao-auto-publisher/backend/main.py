@@ -153,7 +153,7 @@ async def publish_content(req: PublishRequest):
                 title=req.title,
                 content=req.content,
                 cover_path=req.cover_path,
-                auto_publish=req.auto_publish,
+                content_base_dir=req.content_base_dir,
                 headless=False,  # Windows 下建议非 headless
             )
 
