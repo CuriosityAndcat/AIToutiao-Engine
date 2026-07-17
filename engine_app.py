@@ -2117,9 +2117,10 @@ def render_publish():
     依赖 super-publisher 方案：Markdown 图片转为占位符 → 剪贴板 + Ctrl+V 粘贴，
     解决头条编辑器图片不渲染问题。正文不含 # 标题行（S5 已剥离）。
     """
-    result = st.session_state.result_data
+    result = st.session_state.result_data or st.session_state.get("uploaded_md_data")
 
     if not result:
+        # ── 无流水线产出 → 显示空状态 + 上传入口 ──
         st.markdown(
             '<div class="empty-state" style="padding:64px 16px;">'
             '<div style="font-size:48px;margin-bottom:16px;opacity:0.5;">🚀</div>'
@@ -2130,21 +2131,75 @@ def render_publish():
             '</div>',
             unsafe_allow_html=True,
         )
+
+        st.markdown("---")
+        st.markdown('<div class="section-title">📂 或上传本地 .md 文档</div>', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader(
+            "选择 .md 文件直接发布到头条草稿箱",
+            type=["md"],
+            key="md_uploader",
+            label_visibility="collapsed",
+        )
+        if uploaded_file is not None:
+            raw_text = uploaded_file.read().decode("utf-8", errors="replace").strip()
+            if not raw_text:
+                st.warning("文件内容为空，请重新选择")
+            else:
+                lines = raw_text.split("\n")
+                # 查找第一个 "# " 标题行
+                title_line = ""
+                content_lines = []
+                found_title = False
+                for line in lines:
+                    if not found_title and line.strip().startswith("# "):
+                        title_line = line.strip()[2:].strip()
+                        found_title = True
+                    else:
+                        content_lines.append(line)
+                # 兜底：无 # 标题行时取首非空行
+                if not title_line:
+                    first_nonempty = next((l.strip() for l in lines if l.strip()), "")
+                    title_line = first_nonempty
+                body = "\n".join(content_lines if found_title else content_lines).strip()
+                # 如果标题取了首行，正文去掉首行
+                if not found_title and title_line:
+                    body = "\n".join(lines[1:]).strip()
+                if not body:
+                    st.warning("文件正文为空，请检查 .md 内容")
+                else:
+                    st.session_state.uploaded_md_data = {
+                        "title": title_line,
+                        "content": body,
+                        "run_dir": "",
+                        "cover_image": "",
+                        "char_count": len(body),
+                        "inline_images": [],
+                        "run_id": "uploaded",
+                    }
+                    st.session_state.uploaded_md_filename = uploaded_file.name
+                    st.rerun()
         return
 
     title = result.get("title", "")
     content = result.get("content", "")
     run_dir = result.get("run_dir", "")
     cover_image = result.get("cover_image", "")
+    is_pipeline = bool(st.session_state.result_data)
+    is_uploaded = bool(not is_pipeline and st.session_state.get("uploaded_md_data"))
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">🚀 发布到今日头条</div>', unsafe_allow_html=True)
+
+    # ── 上传文件来源标识 ──
+    if is_uploaded:
+        filename = st.session_state.get("uploaded_md_filename", "本地文件.md")
+        st.caption(f"📂 来源: {filename}（可编辑标题后发布）")
 
     # ── 标题 + 封面预览 ──
     col1, col2 = st.columns([3, 1])
     with col1:
         st.text_input("文章标题", value=title, key="publish_title_preview",
-                       disabled=True, label_visibility="collapsed",
+                       disabled=is_pipeline, label_visibility="collapsed",
                        placeholder="标题（由流水线 S3 生成）")
     with col2:
         if cover_image and Path(cover_image).exists():
@@ -2153,8 +2208,54 @@ def render_publish():
     # ── 内容预览 ──
     char_count = result.get("char_count", len(content))
     with st.expander(f"📄 内容预览（{char_count} 字符）", expanded=False):
-        st.caption("正文不含标题行（已由 S5 阶段剥离，标题由 publish 阶段独立填写）")
+        preview_note = "正文不含标题行（已由 S5 阶段剥离，标题由 publish 阶段独立填写）" if is_pipeline else "预览说明：已从 .md 解析（# 标题→标题，剩余→正文），下方为实际发布内容"
+        st.caption(preview_note)
         st.text(content[:800] + ("..." if len(content) > 800 else ""))
+
+    # ── 上传文件：指定图片目录（可选）──
+    if is_uploaded:
+        has_md_images = "![" in content
+        if has_md_images:
+            st.info("📸 文中含图片引用（`![...](images/...)`），请指定产出目录以解析图片路径")
+        current_base = st.session_state.get("uploaded_md_base_dir", "")
+        new_base = st.text_input(
+            "产出目录（含 images/ 子目录）",
+            key="publish_base_dir",
+            placeholder="D:\\AIToutiao-Engine\\outputs\\20260717\\20260717_161546",
+            help="留空按纯文本发布；填写后自动解析文中相对路径图片（如 images/cover.png）",
+        )
+        # 新路径设置
+        if new_base and new_base != current_base:
+            bp = Path(new_base)
+            if bp.is_dir():
+                st.session_state.uploaded_md_base_dir = new_base
+                st.session_state.uploaded_md_data["run_dir"] = new_base
+                # 自动检测封面图
+                cover_p = bp / "images" / "cover.png"
+                if cover_p.exists():
+                    st.session_state.uploaded_md_data["cover_image"] = str(cover_p)
+                # 自动检测内文图
+                inline_p = bp / "images"
+                if inline_p.is_dir():
+                    imgs = sorted(list(inline_p.glob("inline_*.png")) + list(inline_p.glob("inline_*.jpg")))
+                    if imgs:
+                        st.session_state.uploaded_md_data["inline_images"] = [str(p) for p in imgs]
+                st.rerun()
+            else:
+                st.error("路径不存在，请检查")
+        # 清除已设置的路径
+        elif not new_base and current_base:
+            if "uploaded_md_base_dir" in st.session_state:
+                del st.session_state.uploaded_md_base_dir
+            st.session_state.uploaded_md_data["run_dir"] = ""
+            st.session_state.uploaded_md_data["cover_image"] = ""
+            st.session_state.uploaded_md_data["inline_images"] = []
+            st.rerun()
+        elif current_base:
+            st.caption(f"✅ 图片目录已设置：`{current_base}`")
+            # 用 session state 中的实际值覆盖局部变量
+            run_dir = current_base
+            cover_image = st.session_state.uploaded_md_data.get("cover_image", cover_image)
 
     # ── 发布选项 ──
     col1, col2 = st.columns(2)
@@ -2165,9 +2266,20 @@ def render_publish():
         )
     with col2:
         inline_count = len(result.get("inline_images", []))
-        img_info = f"{inline_count + 1} 张图片" if inline_count else "仅封面"
-        st.metric("配图", img_info)
-        st.caption(f"Run: `{result.get('run_id', '')[:16]}...`")
+        if is_uploaded:
+            has_cover = bool(st.session_state.uploaded_md_data.get("cover_image", ""))
+            total_imgs = inline_count + (1 if has_cover else 0)
+            if total_imgs:
+                img_info = f"{total_imgs} 张图片"
+            else:
+                base_set = bool(st.session_state.get("uploaded_md_base_dir", ""))
+                img_info = "目录存在但无图" if base_set else "无配图（纯文本上传）"
+            st.metric("配图", img_info)
+            st.caption("📂 本地文件上传")
+        else:
+            img_info = f"{inline_count + 1} 张图片" if inline_count else "仅封面"
+            st.metric("配图", img_info)
+            st.caption(f"Run: `{result.get('run_id', '')[:16]}...`")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2194,30 +2306,60 @@ def render_publish():
         st.success("✅ 已登录头条后台，可以发布")
     elif login_ok is False:
         st.warning("⚠️ 未登录或登录已过期")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔐 打开登录页面", use_container_width=True):
-                try:
-                    _, _, launch_login_fn = _get_publisher()
-                    success = launch_login_fn(headless=False, timeout_minutes=5)
-                    if success:
-                        st.session_state.login_verified = True
-                        st.rerun()
-                    else:
-                        st.error("登录失败或超时")
-                except Exception as e:
-                    st.error(f"登录失败: {e}")
+
+        # ── 两段式登录：打开浏览器（后台线程）→ 手动验证 ──
+        login_pending = st.session_state.get("login_pending", False)
+
+        if not login_pending:
+            if st.button("🔐 打开登录页面", use_container_width=True, key="btn_open_login"):
+                # 后台线程打开浏览器并自动检测登录（不阻塞 UI）
+                import threading
+                def _login_thread():
+                    try:
+                        _, _, launch_login_fn = _get_publisher()
+                        launch_login_fn(headless=False, timeout_minutes=5)
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_login_thread, daemon=True)
+                t.start()
+                st.session_state.login_pending = True
+                st.rerun()
+        else:
+            st.info("📱 登录页面已打开，请在浏览器中完成扫码登录")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("✅ 我已完成登录，验证状态", use_container_width=True, key="btn_verify_after_login"):
+                    with st.spinner("正在验证登录状态..."):
+                        try:
+                            _, check_login_fn, _ = _get_publisher()
+                            status = check_login_fn()
+                            st.session_state.login_verified = status.get("authenticated", False)
+                            st.session_state.login_pending = False
+                        except Exception as e:
+                            st.error(f"验证失败: {e}")
+                    st.rerun()
+            with col_b:
+                if st.button("🔄 重新打开登录页面", use_container_width=True, key="btn_reopen_login"):
+                    st.session_state.login_pending = False
+                    st.rerun()
     else:
         st.info("点击上方按钮验证登录状态")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+
     # ── 发布按钮 ──
     st.markdown("---")
+
+    # 上传文件时取用户编辑后的标题
+    effective_title = title
+    if is_uploaded:
+        effective_title = st.session_state.get("publish_title_preview", title)
+
     publish_disabled = (
         st.session_state.get("publish_running", False)
         or not login_ok
-        or not title
+        or not effective_title
         or not content
     )
     hint = ""
@@ -2242,7 +2384,7 @@ def render_publish():
                 try:
                     publish_article_fn, _, _ = _get_publisher()
                     pub_result = publish_article_fn(
-                        title=title,
+                        title=effective_title,
                         content=content,
                         cover_path=str(cover_image) if cover_image and Path(cover_image).exists() else None,
                         content_base_dir=run_dir,
@@ -2255,6 +2397,25 @@ def render_publish():
                     st.session_state.publish_running = False
 
             st.rerun()
+
+    # ── 上传文件清除按钮 ──
+    if is_uploaded:
+        st.markdown("")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button(
+                "🗑️ 清除上传文件",
+                use_container_width=True,
+                key="btn_clear_upload",
+                help="移除当前上传的 .md 文件，返回空状态",
+            ):
+                if "uploaded_md_data" in st.session_state:
+                    del st.session_state.uploaded_md_data
+                if "uploaded_md_filename" in st.session_state:
+                    del st.session_state.uploaded_md_filename
+                if "publish_title_preview" in st.session_state:
+                    del st.session_state.publish_title_preview
+                st.rerun()
 
     # ── 发布结果展示 ──
     pub_result = st.session_state.get("publish_result")

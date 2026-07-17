@@ -134,14 +134,36 @@ class AuthManager:
                     for p in context.pages:
                         try:
                             url = p.url
+                            # 跳过 SSO 中转页（正在跳转中，不算失败也不算成功）
+                            if "sso.toutiao.com" in url:
+                                continue
+                            # ── URL 检测 ──
                             if ("profile_v4" in url or
                                     ("mp.toutiao.com" in url and "auth/page/login" not in url)):
-                                print("  ✅ 登录成功！")
+                                print("  ✅ 登录成功！(URL)")
                                 time.sleep(2)
                                 self._save_browser_state(context)
                                 self._save_auth_info()
                                 context.close()
                                 return True
+                            # ── DOM 检测兜底（页面已显示发布入口但 URL 未命中模式）──
+                            try:
+                                body = p.evaluate("document.body.innerText")
+                                if isinstance(body, str) and len(body) > 100:
+                                    has_publish = "发布" in body
+                                    has_login_form = "登录" in body or "扫码" in body
+                                    has_user_menu = ("内容管理" in body or
+                                                     "数据统计" in body or
+                                                     "创作中心" in body)
+                                    if (has_publish or has_user_menu) and not has_login_form:
+                                        print("  ✅ 登录成功！(DOM)")
+                                        time.sleep(2)
+                                        self._save_browser_state(context)
+                                        self._save_auth_info()
+                                        context.close()
+                                        return True
+                            except Exception:
+                                pass
                         except Exception:
                             continue
                     time.sleep(1)
