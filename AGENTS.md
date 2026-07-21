@@ -7,7 +7,7 @@
 
 ## 一句话定位
 
-一个将**视频/口播素材**经「下载 → 转录 → 研究写作 → 配图 → 组装发布」流水线，自动生成并发布头条/公众号图文内容的 Agentic 引擎。`agent/` 是自建的 Harness 框架层（对齐 OpenAI Agents SDK + LangGraph），`lib/toutiao-auto-publisher/` 是生产主项目。
+一个将**视频/口播素材**经「下载 → 转录 → 研究写作 → 配图 → 组装发布」流水线，自动生成并发布头条/公众号图文内容，并支持**文章→视频分镜→CG 视频生成**的 Agentic 引擎。`agent/` 是自建的 Harness 框架层（对齐 OpenAI Agents SDK + LangGraph），`lib/toutiao-auto-publisher/` 是生产主项目。
 
 ---
 
@@ -179,9 +179,18 @@
 |------|------|------|------|
 | `.codebuddy/skills/ui-ux-pro-max/` | Skill | UI/UX 设计智能库 — 67 种风格 / 161 套配色 / 57 组字体 / 99 条 UX 指南 / 22 个技术栈，含 BM25 搜索脚本 | ✅ 已安装 (2026-07-13) |
 | `.codebuddy/skills/humanizer-main/` | Skill | 英文去AI味润色 — 33 个 AI 写作模式检测（内容/语言/风格/交流/填充），草稿→审计→终稿流程，Voice Calibration，防误判指引。基于 Wikipedia Signs of AI writing | ✅ 已安装 (2026-07-15) |
+| `.codebuddy/skills/seedance-2.0-main/` | Skill | Seedance 2.0 Skill OS v6.6.0 — AI 视频导演技能包（54 参考文档+28 子技能），含导演引擎/提示词编译器/重拍协议/中文示例。被 `video-director` Agent 引用 | ✅ 已安装 → `.codebuddy/skills/` (2026-07-18) |
 | `.codebuddy/agents/ui-designer.md` | Subagent (manual) | Streamlit UI 设计师 — 专注本项目的界面设计/优化/审查，引用 ui-ux-pro-max Skill | ✅ 已创建 (2026-07-13) |
 | `.codebuddy/agents/project-manager.md` | Subagent (agentic) | 项目经理 — SAWORKFLOW 任务拆解与范围控制者，把自然语言任务/规格拆成可执行的 [NEXUS-] 阶段任务清单，守护质量门与进度 | ✅ 已创建 (2026-07-15) |
 | `.codebuddy/agents/content-humanizer.md` | Subagent (agentic) | 去AI味润色编辑 — 组合 humanizer-main（33 模式）与 agency 内容创作者角色，对文本/成稿做事后人工化润色，evaluation.py 第5维可选二次审计门 | ✅ 已创建 (2026-07-15) |
+| `.codebuddy/agents/xiaohongshu-operator.md` | Subagent (agentic) | 小红书运营专家 — 种草笔记创作、爆款内容公式、达人合作策略，为美食图文号制定小红书运营规范 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/content-creator.md` | Subagent (agentic) | 内容创作者 — 多平台内容策划与创作，一鱼多吃。为美食号生产小红书调性的种草笔记、菜谱教程 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/xiaohongshu-specialist.md` | Subagent (agentic) | 小红书专家 — 生活方式内容操盘手+趋势捕手，为美食号做品牌定位、审美框架和趋势预判 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/multi-platform-publisher.md` | Subagent (agentic) | 多平台发布编排官 — Wechatsync（主通道）+ xhs-mcp（兜底）分发到 19+ 平台，草稿优先绝不自动发布 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/food-orchestrator.md` | Subagent (agentic) | 美食号运营指挥官 — 用户唯一接口，接收自然语言任务后拆解分派给 5 个美食×小红书 agent，跟踪进度并汇报 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/military-orchestrator.md` | Subagent (agentic) | 军事号运营指挥官 — 用户唯一接口，接收自然语言任务后拆解分派给 9 个今日头条×军事 agent，跟踪进度并汇报 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/video-director.md` | Subagent (agentic) | 视频导演 — 基于 Seedance 2.0 导演引擎做军事视频分镜设计与 Prompt 编译，驱动 Agnes Video V2.0 生成多段 CG 视频 | ✅ 已创建 (2026-07-18) |
+| `.codebuddy/agents/food-video-director.md` | Subagent (agentic) | 美食视频导演 — 基于 Seedance 2.0 导演引擎 + 美食信息图方法论，为美食号做竖屏/方屏美食视频分镜设计与 Prompt 编译 | ✅ 已创建 (2026-07-18) |
 | `.codebuddy/rules/MAP.mdc` | Rule | 历史规则（`agentic-workflow.mdc` 等），按 `.mdc` 扩展名自动加载 | ✅ 已有 |
 | `.codebuddy/memory/` | Working Memory | 跨会话持久化记忆（`MEMORY.md` + 每日 `YYYY-MM-DD.md`） | ✅ 运行中 |
 
@@ -269,17 +278,38 @@ L5 网络层  →  web_search / web_fetch（兜底）
 | **PUB-UPLOAD** | **发布 Tab .md 上传发布**：无流水线产出时可在发布 Tab 上传本地 .md 文件直接发布。解析：`# Title`→标题、剩余→正文；标题可编辑；来源标识 "📂 来源: xxx.md" + 清除按钮 | ✅ 完成 (2026-07-17) | `405467a` |
 | **PUB-IMAGE** | **上传文件图片目录输入**：含图片引用的 .md 文件上传后，新增"产出目录"输入框，自动检测 `images/cover.png` 和 `images/inline_*.png/jpg`。留空按纯文本发布，清空重置配图状态 | ✅ 完成 (2026-07-17) | `405467a` |
 | **AUTH-DOM** | **发布登录 DOM 兜底检测**：`publisher_service.py` `setup_auth` URL 模式未命中时检查 `body.innerText`（发布/内容管理/创作中心关键字），SSO 中转页自动跳过 | ✅ 完成 (2026-07-17) | `405467a` |
+| **FOOD-AGENTS** | **美食号 × 小红书 Agent 体系**：新建 5 agent（xiaohongshu-operator / content-creator / xiaohongshu-specialist / multi-platform-publisher / image-prompt-engineer 扩展）+ 1 指挥官（food-orchestrator），引擎层零改动复用，发布层走 Wechatsync+xhs-mcp | ✅ 完成 (2026-07-18) | 待提交 |
+| **MILITARY-AGENTS** | **军事号 × 头条 Agent 体系**：新建 1 指挥官（military-orchestrator，管辖 9 agent），覆盖选题→写作→配图→质检→合规→发布全链路，烽火情报风格+合规检测闭环 | ✅ 完成 (2026-07-18) | 待提交 |
+| **SEEDANCE-RESEARCH** | **Seedance 2.0 Skill OS 深度研究**：完整分析 Seedance 2.0 v6.6.0 技能包（54 文档+28 子技能），产出 9 章深度研究报告（`docs/Seedance2.0_深度研究报告.md`），本地安装完整技能库（`docs/Skills/seedance-2.0-main/`） | ✅ 完成 (2026-07-18) | 待提交 |
+| **VIDEO-DIRECTOR** | **视频导演 Agent 创建**：基于 Seedance 2.0 导演引擎（9步决策+一致性法则+6种导演声音+7槽Director Formula+重拍协议），军事场景→分镜设计→Prompt编译→对接 Agnes Video V2.0（`agnes_video_gen.py`） | ✅ 完成 (2026-07-18) | 待提交 |
+| **FOOD-VIDEO-DIRECTOR** | **美食视频导演 Agent 创建**：基于 Seedance 2.0 导演引擎（9步决策+一致性法则）+ 美食 Exploded View 信息图方法论 + 6 种美食导演声音（日杂温暖/暗调高级/日杂明亮/热火镬气/冰爽清新/手作叙事），适配小红书/抖音竖屏视频分镜设计 | ✅ 完成 (2026-07-18) | 待提交 |
 
-> ✅ **提交状态（2026-07-17）**：2026-07-15 以来累积的 PUB-1~3 / COMPLIANCE-1 / STYLE-FENGHUO / LOOP-1 共计 6 批次统一提交到 `master`（`a09ba44`）。随后 PUB-UPLOAD / PUB-IMAGE / AUTH-DOM 3 批次提交到 `master`（`405467a`）。含 13 个 modified、13 个 deleted、5 个 new。
+> ✅ **提交状态**：最近提交 @ `b71edd8`（2026-07-18，项目状态更新文档提交）。此前 PUB-1~3 / COMPLIANCE-1 / STYLE-FENGHUO / LOOP-1 6 批次 @ `a09ba44`；PUB-UPLOAD / PUB-IMAGE / AUTH-DOM 3 批次 @ `405467a`。
 
-**随本次提交入库的内容**：
-- `lib/toutiao-auto-publisher/backend/compliance.py` — 合规检测闭环（20项规则→LLM审查→修复重写）
-- `lib/toutiao-auto-publisher/backend/prompts/fenghuo_qingbao.py` — 烽火情报风格 prompt
-- `tests/test_publish.py` — 发布功能测试入口（CLI 参数 `--article` / `--headless`）
-- `docs/头条百科帮助中心完整文档.md` — 头条百科帮助中心 7 页面完整文档
-- `docs/AgentsWorkSpace/` — 智能体工作流产出（14 子目录）
-- `docs/Skills/agency-agents-zh-main/` — 266 中文角色库（含 PROJECT-AGENT-MAP / REPO-UNDERSTANDING）
+**待提交内容（工作区变更，~25 文件）**：
+
+| 类别 | 文件 | 说明 |
+|------|------|------|
+| Agent 层 | `.codebuddy/agents/` 新增 8 个（food-orchestrator / military-orchestrator / video-director / food-video-director / xiaohongshu-operator / content-creator / xiaohongshu-specialist / multi-platform-publisher），更新 2 个（image-prompt-engineer / military-orchestrator） | 美食×小红书 + 军事×头条 双线 Agent 体系就绪 |
+| 技能库 | `docs/Skills/seedance-2.0-main/` (83+ 文件) | Seedance 2.0 Skill OS v6.6.0 本地安装 |
+| 视频生成 | `lib/toutiao-auto-publisher/backend/agnes_video_gen.py` (306 行) | Agnes Video V2.0 API 对接，玉渊谭天 CG 风格 |
+| 美食配图 | `_generate_food_images.py` (320+ 行) | 照烧鸡腿封面 v3 生成脚本 |
+| 参考数据 | `docs/军事视频参考数据/` / `docs/美食图文参考数据/` | 风格参考图+分析文档 |
+| 研究文档 | `docs/Seedance2.0_深度研究报告.md` | 9 章完整分析 |
+| 工作产物 | `docs/AgentsWorkSpace/` 新增 4 子目录（content-creator / image-prompt-engineer / xiaohongshu-operator / 项目经理） | 照烧鸡腿诊断+AB测试方案等 |
+| 配置 | `AGENTS.md` / `.codebuddy/memory/` | 项目地图+记忆同步更新 |
+
+**CodeBuddy Agent 清单（20 个，2026-07-18）**：
+```
+agent-orchestrator / content-creator / content-humanizer / food-orchestrator
+food-video-director / image-prompt-engineer / legal-compliance-checker / military-orchestrator
+multi-agent-architect / multi-platform-publisher / news-briefing-expert
+reality-checker / ui-code-reviewer / ui-frontend-developer
+ui-incident-commander / ui-minimal-change / video-director
+voice-ai-transcription-engineer / writing-prompt-engineer
+xiaohongshu-operator / xiaohongshu-specialist
+```
 
 ---
 
-*最后更新：2026-07-17 · 发布流程 3 轮迭代（增量计数→重试→保存轮询）全部验证通过，4 张图片零失败；合规检测闭环接入 write_stage；烽火情报风格落地。*
+*最后更新：2026-07-18 · 双线 Agent 体系（美食×小红书 + 军事×头条，共 14 个专业 Agent+2 指挥官）就绪；Seedance 2.0 导演引擎研究完成并落地 video-director；agnes_video_gen.py 视频生成链路已跑通首段。*
