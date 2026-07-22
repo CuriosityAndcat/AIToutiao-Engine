@@ -59,6 +59,9 @@ models/
 # Screenshots
 screenshot.png
 
+# GitHub Actions workflow files (token lacks workflow scope)
+.github/workflows/
+
 # Agent / IDE project data
 .codebuddy/
 
